@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OAuth 配置进度追踪器</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    
+    .header {
+      text-align: center;
+      color: white;
+      margin-bottom: 40px;
+    }
+    
+    .header h1 {
+      font-size: 36px;
+      margin-bottom: 10px;
+    }
+    
+    .header p {
+      font-size: 18px;
+      opacity: 0.9;
+    }
+    
+    .progress-overview {
+      background: white;
+      border-radius: 20px;
+      padding: 30px;
+      margin-bottom: 30px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+    
+    .progress-bar-container {
+      background: #e0e0e0;
+      border-radius: 10px;
+      height: 40px;
+      overflow: hidden;
+      margin: 20px 0;
+    }
+    
+    .progress-bar {
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      height: 100%;
+      width: 0%;
+      transition: width 0.5s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+    }
+    
+    .step-list {
+      display: grid;
+      gap: 20px;
+    }
+    
+    .step {
+      background: white;
+      border-radius: 15px;
+      padding: 25px;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+      transition: all 0.3s;
+    }
+    
+    .step:hover {
+      box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+      transform: translateY(-2px);
+    }
+    
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+    
+    .step-number {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 18px;
+    }
+    
+    .step.pending .step-number {
+      background: #e0e0e0;
+      color: #666;
+    }
+    
+    .step.in-progress .step-number {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      animation: pulse 2s infinite;
+    }
+    
+    .step.completed .step-number {
+      background: #4caf50;
+      color: white;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    
+    .step-title {
+      flex: 1;
+      font-size: 20px;
+      font-weight: 600;
+      color: #333;
+    }
+    
+    .step-status {
+      padding: 5px 15px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    
+    .step.pending .step-status {
+      background: #f5f5f5;
+      color: #666;
+    }
+    
+    .step.in-progress .step-status {
+      background: #e3f2fd;
+      color: #1976d2;
+    }
+    
+    .step.completed .step-status {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+    
+    .step-content {
+      color: #666;
+      line-height: 1.6;
+      margin-bottom: 15px;
+    }
+    
+    .step-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+    
+    .btn-secondary {
+      background: white;
+      color: #667eea;
+      border: 2px solid #667eea;
+    }
+    
+    .btn-secondary:hover {
+      background: #f5f5ff;
+    }
+    
+    .btn-success {
+      background: #4caf50;
+      color: white;
+    }
+    
+    .checklist {
+      background: #f8f9fa;
+      border-radius: 10px;
+      padding: 15px;
+      margin-top: 15px;
+    }
+    
+    .checklist-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      color: #666;
+      font-size: 14px;
+    }
+    
+    .checklist-item input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+    }
+    
+    .quick-links {
+      background: white;
+      border-radius: 15px;
+      padding: 25px;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+      margin-top: 30px;
+    }
+    
+    .quick-links h3 {
+      margin-bottom: 15px;
+      color: #333;
+    }
+    
+    .link-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+    }
+    
+    .link-card {
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      text-decoration: none;
+      color: #333;
+      transition: all 0.3s;
+    }
+    
+    .link-card:hover {
+      background: #e9ecef;
+      transform: translateY(-2px);
+    }
+    
+    .link-card-title {
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+    
+    .link-card-desc {
+      font-size: 12px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🔐 OAuth 配置进度追踪器</h1>
+      <p>AI漫剧创作应用 - 一步步完成配置</p>
+    </div>
+
+    <div class="progress-overview">
+      <h2 style="margin-bottom: 10px;">总体进度</h2>
+      <p style="color: #666; margin-bottom: 15px;">完成以下步骤即可启用社交登录功能</p>
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="totalProgress">0%</div>
+      </div>
+      <div style="display: flex; justify-content: space-between; color: #666; font-size: 14px;">
+        <span id="completedSteps">0 / 5 已完成</span>
+        <span id="estimatedTime">预计耗时: 10 分钟</span>
+      </div>
+    </div>
+
+    <div class="step-list">
+      <!-- 步骤 1 -->
+      <div class="step pending" data-step="1">
+        <div class="step-header">
+          <div class="step-number">1</div>
+          <div class="step-title">创建 Google OAuth 应用</div>
+          <div class="step-status">待完成</div>
+        </div>
+        <div class="step-content">
+          在 Google Cloud Console 创建 OAuth 2.0 客户端 ID，获取 Client ID 和 Client Secret。
+        </div>
+        <div class="checklist">
+          <div class="checklist-item">
+            <input type="checkbox" id="google-1" onchange="updateProgress()">
+            <label for="google-1">访问 Google Cloud Console</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="google-2" onchange="updateProgress()">
+            <label for="google-2">创建 OAuth 2.0 客户端 ID</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="google-3" onchange="updateProgress()">
+            <label for="google-3">配置重定向 URI: <code>https://cjjbxfzwjhnuwkqsntop.supabase.co/auth/v1/callback</code></label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="google-4" onchange="updateProgress()">
+            <label for="google-4">保存 Client ID 和 Secret</label>
+          </div>
+        </div>
+        <div class="step-actions">
+          <a href="https://console.cloud.google.com/apis/credentials" target="_blank" class="btn btn-primary">
+            🔗 打开 Google Cloud Console
+          </a>
+          <button class="btn btn-secondary" onclick="markStepComplete(1)">✓ 标记为完成</button>
+        </div>
+      </div>
+
+      <!-- 步骤 2 -->
+      <div class="step pending" data-step="2">
+        <div class="step-header">
+          <div class="step-number">2</div>
+          <div class="step-title">在 Supabase 配置 Google</div>
+          <div class="step-status">待完成</div>
+        </div>
+        <div class="step-content">
+          在 Supabase Dashboard 中启用 Google OAuth，并输入从 Google Cloud 获取的凭据。
+        </div>
+        <div class="checklist">
+          <div class="checklist-item">
+            <input type="checkbox" id="supabase-google-1" onchange="updateProgress()">
+            <label for="supabase-google-1">打开 Supabase Auth Providers</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="supabase-google-2" onchange="updateProgress()">
+            <label for="supabase-google-2">展开 Google 配置</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="supabase-google-3" onchange="updateProgress()">
+            <label for="supabase-google-3">粘贴 Client ID 和 Secret</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="supabase-google-4" onchange="updateProgress()">
+            <label for="supabase-google-4">启用并保存</label>
+          </div>
+        </div>
+        <div class="step-actions">
+          <a href="https://supabase.com/dashboard/project/cjjbxfzwjhnuwkqsntop/auth/providers" target="_blank" class="btn btn-primary">
+            🔗 打开 Supabase Providers
+          </a>
+          <button class="btn btn-secondary" onclick="markStepComplete(2)">✓ 标记为完成</button>
+        </div>
+      </div>
+
+      <!-- 步骤 3 -->
+      <div class="step pending" data-step="3">
+        <div class="step-header">
+          <div class="step-number">3</div>
+          <div class="step-title">创建 GitHub OAuth 应用</div>
+          <div class="step-status">待完成</div>
+        </div>
+        <div class="step-content">
+          在 GitHub Developer Settings 创建 OAuth App，获取 Client ID 和 Client Secret。
+        </div>
+        <div class="checklist">
+          <div class="checklist-item">
+            <input type="checkbox" id="github-1" onchange="updateProgress()">
+            <label for="github-1">访问 GitHub Developer Settings</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="github-2" onchange="updateProgress()">
+            <label for="github-2">创建新的 OAuth App</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="github-3" onchange="updateProgress()">
+            <label for="github-3">配置 Authorization callback URL</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="github-4" onchange="updateProgress()">
+            <label for="github-4">生成并保存 Client Secret</label>
+          </div>
+        </div>
+        <div class="step-actions">
+          <a href="https://github.com/settings/developers" target="_blank" class="btn btn-primary">
+            🔗 打开 GitHub Settings
+          </a>
+          <button class="btn btn-secondary" onclick="markStepComplete(3)">✓ 标记为完成</button>
+        </div>
+      </div>
+
+      <!-- 步骤 4 -->
+      <div class="step pending" data-step="4">
+        <div class="step-header">
+          <div class="step-number">4</div>
+          <div class="step-title">在 Supabase 配置 GitHub</div>
+          <div class="step-status">待完成</div>
+        </div>
+        <div class="step-content">
+          在 Supabase Dashboard 中启用 GitHub OAuth，并输入从 GitHub 获取的凭据。
+        </div>
+        <div class="checklist">
+          <div class="checklist-item">
+            <input type="checkbox" id="supabase-github-1" onchange="updateProgress()">
+            <label for="supabase-github-1">打开 Supabase Auth Providers</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="supabase-github-2" onchange="updateProgress()">
+            <label for="supabase-github-2">展开 GitHub 配置</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="supabase-github-3" onchange="updateProgress()">
+            <label for="supabase-github-3">粘贴 Client ID 和 Secret</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="supabase-github-4" onchange="updateProgress()">
+            <label for="supabase-github-4">启用并保存</label>
+          </div>
+        </div>
+        <div class="step-actions">
+          <a href="https://supabase.com/dashboard/project/cjjbxfzwjhnuwkqsntop/auth/providers" target="_blank" class="btn btn-primary">
+            🔗 打开 Supabase Providers
+          </a>
+          <button class="btn btn-secondary" onclick="markStepComplete(4)">✓ 标记为完成</button>
+        </div>
+      </div>
+
+      <!-- 步骤 5 -->
+      <div class="step pending" data-step="5">
+        <div class="step-header">
+          <div class="step-number">5</div>
+          <div class="step-title">配置重定向 URL</div>
+          <div class="step-status">待完成</div>
+        </div>
+        <div class="step-content">
+          在 Supabase URL Configuration 中添加应用的重定向地址。
+        </div>
+        <div class="checklist">
+          <div class="checklist-item">
+            <input type="checkbox" id="redirect-1" onchange="updateProgress()">
+            <label for="redirect-1">打开 URL Configuration</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="redirect-2" onchange="updateProgress()">
+            <label for="redirect-2">设置 Site URL</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="redirect-3" onchange="updateProgress()">
+            <label for="redirect-3">添加 Redirect URLs</label>
+          </div>
+          <div class="checklist-item">
+            <input type="checkbox" id="redirect-4" onchange="updateProgress()">
+            <label for="redirect-4">保存配置</label>
+          </div>
+        </div>
+        <div class="step-actions">
+          <a href="https://supabase.com/dashboard/project/cjjbxfzwjhnuwkqsntop/auth/url-configuration" target="_blank" class="btn btn-primary">
+            🔗 打开 URL Configuration
+          </a>
+          <button class="btn btn-secondary" onclick="markStepComplete(5)">✓ 标记为完成</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="quick-links">
+      <h3>📚 快速链接</h3>
+      <div class="link-grid">
+        <a href="/OAUTH_QUICK_START.md" target="_blank" class="link-card">
+          <div class="link-card-title">⚡ 快速入门</div>
+          <div class="link-card-desc">5分钟快速配置指南</div>
+        </a>
+        <a href="/OAUTH_SETUP_GUIDE.md" target="_blank" class="link-card">
+          <div class="link-card-title">📖 完整指南</div>
+          <div class="link-card-desc">详细配置文档</div>
+        </a>
+        <a href="/oauth-test.html" target="_blank" class="link-card">
+          <div class="link-card-title">🧪 测试页面</div>
+          <div class="link-card-desc">测试 OAuth 功能</div>
+        </a>
+        <a href="/OAUTH_COMPLETE_SUMMARY.md" target="_blank" class="link-card">
+          <div class="link-card-title">✅ 配置总结</div>
+          <div class="link-card-desc">查看所有已完成的工作</div>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function updateProgress() {
+      const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+      const total = checkboxes.length;
+      const checked = Array.from(checkboxes).filter(cb => cb.checked).length;
+      const percentage = Math.round((checked / total) * 100);
+      
+      document.getElementById('totalProgress').style.width = percentage + '%';
+      document.getElementById('totalProgress').textContent = percentage + '%';
+      
+      // 更新步骤状态
+      for (let i = 1; i <= 5; i++) {
+        const stepCheckboxes = document.querySelectorAll(`[id^="google-${i}"], [id^="github-${i}"], [id^="supabase-google-${i}"], [id^="supabase-github-${i}"], [id^="redirect-${i}"]`);
+        const stepChecked = Array.from(stepCheckboxes).filter(cb => cb.checked).length;
+        const stepTotal = stepCheckboxes.length;
+        
+        if (stepTotal > 0 && stepChecked === stepTotal) {
+          markStepComplete(i);
+        }
+      }
+      
+      // 保存进度
+      saveProgress();
+    }
+    
+    function markStepComplete(stepNumber) {
+      const step = document.querySelector(`[data-step="${stepNumber}"]`);
+      step.className = 'step completed';
+      step.querySelector('.step-status').textContent = '已完成';
+      
+      const completedSteps = document.querySelectorAll('.step.completed').length;
+      document.getElementById('completedSteps').textContent = `${completedSteps} / 5 已完成`;
+      
+      if (completedSteps === 5) {
+        showCelebration();
+      }
+      
+      saveProgress();
+    }
+    
+    function saveProgress() {
+      const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+      const progress = {};
+      checkboxes.forEach(cb => {
+        progress[cb.id] = cb.checked;
+      });
+      localStorage.setItem('oauth-config-progress', JSON.stringify(progress));
+    }
+    
+    function loadProgress() {
+      const saved = localStorage.getItem('oauth-config-progress');
+      if (saved) {
+        const progress = JSON.parse(saved);
+        Object.keys(progress).forEach(id => {
+          const checkbox = document.getElementById(id);
+          if (checkbox) {
+            checkbox.checked = progress[id];
+          }
+        });
+        updateProgress();
+      }
+    }
+    
+    function showCelebration() {
+      alert('🎉 恭喜！OAuth 配置全部完成！\n\n现在可以测试 Google 和 GitHub 登录功能了！');
+    }
+    
+    // 页面加载时恢复进度
+    loadProgress();
+  </script>
+</body>
+</html>

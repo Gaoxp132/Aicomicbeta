@@ -1,0 +1,15 @@
+{
+  "name": "AI漫剧创作 - Figma插件",
+  "id": "ai-comic-creator-figma-plugin",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "capabilities": [],
+  "enableProposedApi": false,
+  "editorType": ["figma", "figjam"],
+  "networkAccess": {
+    "allowedDomains": [
+      "https://cjjbxfzwjhnuwkqsntop.supabase.co"
+    ]
+  }
+}

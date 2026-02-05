@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OAuth 配置测试 - AI漫剧创作</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .container {
+      background: white;
+      border-radius: 20px;
+      padding: 40px;
+      max-width: 600px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+    
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    
+    .section {
+      margin-bottom: 30px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 10px;
+    }
+    
+    .section h2 {
+      font-size: 18px;
+      color: #333;
+      margin-bottom: 15px;
+    }
+    
+    .info {
+      background: #e3f2fd;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #0d47a1;
+    }
+    
+    .info code {
+      background: #fff;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      color: #d32f2f;
+    }
+    
+    button {
+      width: 100%;
+      padding: 15px;
+      margin-bottom: 10px;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    .btn-google {
+      background: #fff;
+      color: #333;
+      border: 2px solid #ddd;
+    }
+    
+    .btn-github {
+      background: #24292e;
+      color: white;
+    }
+    
+    .btn-check {
+      background: #667eea;
+      color: white;
+    }
+    
+    .status {
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 20px;
+    }
+    
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+    }
+    
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+    }
+    
+    .status.info {
+      background: #d1ecf1;
+      color: #0c5460;
+    }
+    
+    pre {
+      background: #2d2d2d;
+      color: #f8f8f2;
+      padding: 15px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 12px;
+      margin-top: 10px;
+    }
+    
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔐 OAuth 配置测试</h1>
+    <p class="subtitle">AI漫剧创作应用 - 社交登录功能测试</p>
+    
+    <div class="section">
+      <h2>📊 项目信息</h2>
+      <div class="info">
+        <strong>项目 ID:</strong> <code>cjjbxfzwjhnuwkqsntop</code><br>
+        <strong>Supabase URL:</strong> <code>https://cjjbxfzwjhnuwkqsntop.supabase.co</code><br>
+        <strong>回调地址:</strong> <code id="callback-url">加载中...</code>
+      </div>
+    </div>
+    
+    <div class="section">
+      <h2>🧪 测试登录</h2>
+      <button class="btn-google" onclick="loginWithGoogle()">
+        <span>Google Logo</span>
+        使用 Google 登录
+      </button>
+      <button class="btn-github" onclick="loginWithGitHub()">
+        <span>📱</span>
+        使用 GitHub 登录
+      </button>
+      <button class="btn-check" onclick="checkConfig()">
+        <span>🔍</span>
+        检查配置状态
+      </button>
+    </div>
+    
+    <div id="status"></div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = 'https://cjjbxfzwjhnuwkqsntop.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqamJ4Znp3amhudXdrcXNudG9wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc5NjQyNzAsImV4cCI6MjA1MzU0MDI3MH0.tvwDfvE2EQ9xpjrvfkWqNMNL_4RiAuA3M2DZKEuWPcw';
+    
+    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    
+    // 更新回调地址
+    document.getElementById('callback-url').textContent = window.location.origin + '/auth/callback';
+    
+    function showStatus(message, type = 'info') {
+      const statusDiv = document.getElementById('status');
+      statusDiv.className = `status ${type}`;
+      statusDiv.innerHTML = message;
+    }
+    
+    async function loginWithGoogle() {
+      showStatus('<div class="spinner"></div> 正在跳转到 Google 登录...', 'info');
+      
+      try {
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin + '/auth/callback'
+          }
+        });
+        
+        if (error) {
+          showStatus(`❌ 登录失败: ${error.message}<br><br><strong>可能原因:</strong><br>1. Google OAuth 未在 Supabase 中配置<br>2. Client ID/Secret 配置错误<br>3. 重定向 URI 不匹配`, 'error');
+        }
+      } catch (err) {
+        showStatus(`❌ 错误: ${err.message}`, 'error');
+      }
+    }
+    
+    async function loginWithGitHub() {
+      showStatus('<div class="spinner"></div> 正在跳转到 GitHub 登录...', 'info');
+      
+      try {
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider: 'github',
+          options: {
+            redirectTo: window.location.origin + '/auth/callback'
+          }
+        });
+        
+        if (error) {
+          showStatus(`❌ 登录失败: ${error.message}<br><br><strong>可能原因:</strong><br>1. GitHub OAuth 未在 Supabase 中配置<br>2. Client ID/Secret 配置错误<br>3. 重定向 URI 不匹配`, 'error');
+        }
+      } catch (err) {
+        showStatus(`❌ 错误: ${err.message}`, 'error');
+      }
+    }
+    
+    async function checkConfig() {
+      showStatus('<div class="spinner"></div> 正在检查配置...', 'info');
+      
+      try {
+        // 检查当前会话
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (session) {
+          showStatus(`✅ 已登录！<br><br><strong>用户信息:</strong><pre>${JSON.stringify({
+            email: session.user.email,
+            provider: session.user.app_metadata?.provider,
+            user_id: session.user.id
+          }, null, 2)}</pre>`, 'success');
+        } else {
+          showStatus(`ℹ️ 未登录<br><br><strong>配置检查:</strong><br>1. 访问 <a href="https://supabase.com/dashboard/project/cjjbxfzwjhnuwkqsntop/auth/providers" target="_blank">Supabase Auth Providers</a><br>2. 启用 Google 和 GitHub<br>3. 配置 Client ID 和 Secret<br>4. 重定向 URI: <code>${SUPABASE_URL}/auth/v1/callback</code>`, 'info');
+        }
+      } catch (err) {
+        showStatus(`❌ 检查失败: ${err.message}`, 'error');
+      }
+    }
+    
+    // 页面加载时检查配置
+    checkConfig();
+  </script>
+</body>
+</html>
