@@ -3,10 +3,10 @@
  */
 
 // 基础类型
-export type TabType = 'create' | 'series' | 'community' | 'profile';
-export type CategoryType = 'all' | 'series' | 'anime' | 'cyberpunk' | 'fantasy' | 'realistic' | 'cartoon' | 'comic';
-export type SortType = 'latest' | 'popular';
 export type TaskStatus = 'generating' | 'completed' | 'failed';
+
+// v6.0.36: 作品类型（从漫剧扩展到全品类影视）
+export type ProductionType = 'comic_drama' | 'short_drama' | 'micro_film' | 'movie' | 'tv_series' | 'documentary' | 'music_video' | 'advertisement';
 
 // 漫剧作品
 export interface Comic {
@@ -22,31 +22,16 @@ export interface Comic {
   taskId?: string;
   imageUrls?: string[];
   resolution?: string;
+  aspectRatio?: string; // v6.0.80: 视频画面比例（从metadata提取）
   fps?: number;
   enableAudio?: boolean;
   model?: string;
   userPhone?: string;
+  metadata?: any; // v6.0.6: generation_metadata from backend
+  seriesId?: string; // v6.0.6: extracted from metadata for task cleanup on series deletion
 }
 
-// 社区作品
-export interface CommunityWork {
-  id: string;
-  task_id: string;
-  user_phone: string;
-  user_nickname?: string;
-  title: string;
-  prompt: string;
-  style: string;
-  duration: string;
-  thumbnail?: string;
-  video_url: string;
-  likes: number;
-  views: number;
-  shares: number;
-  created_at: string;
-}
-
-// 🆕 社区漫剧系列作品
+// 社区漫剧系列作品
 export interface CommunitySeriesWork {
   id: string; // series ID
   type: 'series'; // 标识这是漫剧系列
@@ -66,6 +51,7 @@ export interface CommunitySeriesWork {
     synopsis: string;
     thumbnail?: string;
     videoUrl?: string; // 合成后的完整视频URL（如果有的话）
+    mergedVideoUrl?: string; // v6.0.17: 合并视频URL
     totalDuration: number;
     status: 'draft' | 'generating' | 'completed' | 'failed';
     storyboardCount: number;
@@ -76,6 +62,7 @@ export interface CommunitySeriesWork {
   shares: number;
   comments: number;
   isLiked?: boolean; // 当前用户是否已点赞
+  aspectRatio?: string; // v6.0.83: 画面比例（从后端coherence_check提取）
   continueWatching?: {
     episodeNumber: number;
     lastPosition: number;
@@ -86,159 +73,12 @@ export interface CommunitySeriesWork {
   updated_at: string;
 }
 
-// 评论
-export interface Comment {
-  id: string;
-  work_id: string;
-  user_phone: string;
-  user_nickname?: string;
-  content: string;
-  created_at: string;
-  replies?: CommentReply[];
-}
-
-// 评论回复
-export interface CommentReply {
-  id: string;
-  comment_id: string;
-  user_phone: string;
-  user_nickname?: string;
-  content: string;
-  created_at: string;
-}
-
-// 用户信息
-export interface UserInfo {
-  phone: string;
-  nickname?: string;
-  avatar?: string;
-  created_at?: string;
-}
-
-// 作品交互数据
-export interface WorkInteractions {
-  likes: number;
-  shares: number;
-  comments: number;
-  views: number;
-  isLiked: boolean;
-}
-
-// 视频生成任务
-export interface GenerateTask {
-  id: string;
-  taskId: string;
-  status: TaskStatus;
-  progress?: number;
-  prompt: string;
-  style: string;
-  duration: string;
-  resolution?: string;
-  fps?: number;
-  enableAudio?: boolean;
-  createdAt: Date;
-  updatedAt?: Date;
-}
-
 // API响应
 export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
   error?: string;
   message?: string;
-}
-
-// 分页参数
-export interface PaginationParams {
-  page: number;
-  limit: number;
-}
-
-// 分页响应
-export interface PaginatedResponse<T> {
-  success: boolean;
-  data: T[];
-  total: number;
-  page: number;
-  limit: number;
-  hasMore: boolean;
-}
-
-// 社区作品查询参数
-export interface CommunityWorksParams extends PaginationParams {
-  category?: CategoryType;
-  sort?: SortType;
-  search?: string;
-}
-
-// 视频生成参数
-export interface VideoGenerateParams {
-  prompt: string;
-  style: string;
-  duration: number;
-  resolution?: string;
-  fps?: number;
-  enableAudio?: boolean;
-  model?: string;
-}
-
-// 组件Props类型
-export interface BaseComponentProps {
-  className?: string;
-  style?: React.CSSProperties;
-}
-
-// 对话框Props
-export interface DialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-}
-
-// 视频播放器Props
-export interface VideoPlayerProps {
-  src: string;
-  poster?: string;
-  autoPlay?: boolean;
-  controls?: boolean;
-  muted?: boolean;
-  loop?: boolean;
-  className?: string;
-}
-
-// 表单字段
-export interface FormField<T = string> {
-  value: T;
-  error?: string;
-  touched: boolean;
-}
-
-// 表单状态
-export interface FormState {
-  [key: string]: FormField;
-}
-
-// 验证结果
-export interface ValidationResult {
-  valid: boolean;
-  error?: string;
-  errors?: Record<string, string>;
-}
-
-// 火山引擎API响应
-export interface VolcengineResponse {
-  code: number;
-  message: string;
-  data?: any;
-  request_id?: string;
-}
-
-// 火山引擎任务状态
-export interface VolcengineTaskStatus {
-  task_id: string;
-  status: 'pending' | 'processing' | 'success' | 'failed';
-  progress?: number;
-  result_url?: string;
-  error_message?: string;
 }
 
 // ==================== 漫剧创作系统类型 ====================
@@ -268,12 +108,13 @@ export interface Storyboard {
   dialogue?: string; // 对白
   characters: string[]; // 涉及的角色ID列表
   location?: string; // 场景位置
-  timeOfDay?: 'morning' | 'noon' | 'afternoon' | 'evening' | 'night'; // 时间
-  cameraAngle?: 'close-up' | 'medium' | 'wide' | 'overhead' | 'low-angle'; // 镜头角度
+  timeOfDay?: string; // 时间（早晨/上午/中午/下午/傍晚/夜晚，支持中英文）
+  cameraAngle?: string; // 镜头角度/景别（支持PRO_SHOT_MAP全部中英文值）
   duration: number; // 预计时长（秒）
   emotionalTone?: string; // 情感基调
   growthInsight?: string; // 成长洞察
   imageUrl?: string; // 生成的分镜图片
+  thumbnailUrl?: string; // 分镜缩略图
   videoUrl?: string; // 生成的视频片段
   videoTaskId?: string; // 视频生成任务ID（新字段名）
   status: 'draft' | 'generating' | 'completed' | 'failed';
@@ -296,7 +137,7 @@ export interface Episode {
   storyboards: Storyboard[];
   totalDuration: number; // 总时长（秒）
   status: 'draft' | 'generating' | 'completed' | 'failed';
-  // 🆕 视频合成相关字段
+  // 视频合成相关字段
   mergedVideoUrl?: string; // 合并后的视频URL（播放列表JSON或M3U8）
   mergeTaskId?: string; // 视频合成任务ID
   mergeStatus?: 'pending' | 'merging' | 'completed' | 'failed'; // 视频合成状态
@@ -317,21 +158,21 @@ export interface Series {
   episodes: Episode[];
   totalEpisodes: number;
   coverImage?: string;
-  coverImageUrl?: string; // 🔧 数据库字段映射
+  coverImageUrl?: string; // 数据库字段映射
   userPhone?: string;
   createdAt: Date | string;
   updatedAt: Date | string;
   status: 'draft' | 'generating' | 'in-progress' | 'completed' | 'failed';
-  // 🆕 统计信息（从后端返回）
+  // 统计信息（从后端返回）
   stats?: {
     charactersCount: number;
     episodesCount: number;
     storyboardsCount: number;
     completedVideosCount: number;
   };
-  // 🆕 排队状态
+  // 排队状态
   queueStatus?: 'queued' | 'processing';
-  // 🆕 AI生成进度信息
+  // AI生成进度信息（数据库中可能为数字、null或对象）
   generationProgress?: {
     currentStep: number;
     totalSteps: number;
@@ -340,24 +181,41 @@ export interface Series {
     startedAt?: string;
     completedAt?: string;
     failedAt?: string;
-  };
-  // 🆕 故事大纲
+  } | number | null;
+  // 故事大纲
   storyOutline?: string;
-  // 🆕 主题
+  // 主题
   theme?: string;
-  // 🆕 目标受众
+  // 目标受众
   targetAudience?: string;
-  // 🆕 核心价值观
+  // 核心价值观
   coreValues?: string[];
-  // 🆕 一致性检查结果
-  coherenceCheck?: any;
-  // 🆕 章节管理（用于长剧30-80集）
+  // v6.0.8: 视觉一致性——视觉风格指南 + 角色外貌锁定
+  coherenceCheck?: {
+    visualStyleGuide?: string; // AI生成的完整视觉风格指南文本
+    characterAppearances?: { name: string; role: string; appearance: string }[]; // 角色外貌卡
+    baseStyle?: string; // 基础风格 key (e.g. 'anime', 'realistic')
+    baseStylePrompt?: string; // 基础风格的详细prompt描述
+    generatedAt?: string; // 生成时间
+    referenceImageUrl?: string; // v6.0.16: 参考图URL
+    productionType?: ProductionType; // v6.0.36: 作品类型
+    isPublic?: boolean; // v6.0.70: 是否发布到社区
+    resolution?: string; // v6.0.78: 视频分辨率（720p/1080p/480p）
+    aspectRatio?: string; // v6.0.79: 视频比例（16:9/9:16/1:1/4:3/3:4）
+    styleAnchorImageUrl?: string; // v6.0.118: 风格锚定图URL
+    styleAnchorScene?: string; // v6.0.118: 锚定来源（'user-upload' | 'E1S1' 等）
+    styleAnchorSetAt?: string; // v6.0.118: 锚定时间
+    styleAnchorUpgradedFrom?: string; // v6.0.118: 升级来源追踪
+  } | null;
+  // 章节管理（用于长剧30-80集）
   chapters?: Chapter[];
-  // 🆕 是否为长剧（>15集）
+  // 是否为长剧（>15集）
   isLongSeries?: boolean;
+  // v6.0.70: 是否发布到社区（默认true，存储在coherence_check.isPublic）
+  isPublic?: boolean;
 }
 
-// 🆕 章节（用于长剧组织，每章包含多集）
+// 章节（用于长剧组织，每章包含多集）
 export interface Chapter {
   id: string;
   seriesId: string;
@@ -382,31 +240,11 @@ export interface SeriesFormData {
   style: string;
   episodeCount: number;
   storyOutline: string; // 故事大纲
-}
-
-// AI分析结果
-export interface AIAnalysisResult {
-  characters: Character[];
-  episodes: {
-    episodeNumber: number;
-    title: string;
-    synopsis: string;
-    scenes: {
-      sceneNumber: number;
-      description: string;
-      dialogue?: string;
-      characters: string[];
-      location: string;
-      duration: number;
-    }[];
-  }[];
-}
-
-// 分镜生成参数
-export interface StoryboardGenerateParams {
-  seriesId: string;
-  episodeId: string;
-  storyboard: Storyboard;
-  characters: Character[];
-  style: string;
+  theme?: string; // 主题
+  targetAudience?: string; // 目标受众
+  referenceImageUrl?: string; // v6.0.16: 参考图URL
+  productionType?: ProductionType; // v6.0.36: 作品类型
+  isPublic?: boolean; // v6.0.70: 是否发布到社区（默认true）
+  resolution?: string; // v6.0.78: 视频分辨率（720p/1080p/480p）
+  aspectRatio?: string; // v6.0.79: 视频比例（16:9/9:16/1:1/4:3/3:4）
 }

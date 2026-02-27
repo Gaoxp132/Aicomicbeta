@@ -6,9 +6,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Play, Pause, Volume2, VolumeX, SkipBack, SkipForward, Maximize, Minimize } from 'lucide-react';
-import { apiRequest } from '@/app/utils/apiClient';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
-import Hls from 'hls.js';
+import { apiRequest, formatTime, ASPECT_RATIO_LABELS } from '../utils';
+import { useHlsPlayer } from '../hooks/media';
 
 interface Storyboard {
   id: string;
@@ -26,9 +25,23 @@ interface EpisodePlayerProps {
   episodeTitle: string;
   seriesTitle: string;
   onClose: () => void;
+  aspectRatio?: string; // v6.0.80: 视频画面比例（16:9/9:16/1:1/4:3/3:4）
 }
 
-export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }: EpisodePlayerProps) {
+// v6.0.80: 根据画面比例计算视频容器约束样式
+function getAspectRatioStyle(ratio?: string): React.CSSProperties {
+  switch (ratio) {
+    case '9:16': return { maxWidth: '56.25vh', margin: '0 auto' }; // 竖屏
+    case '1:1':  return { maxWidth: '100vh', margin: '0 auto' };  // 方形
+    case '3:4':  return { maxWidth: '75vh', margin: '0 auto' };   // 竖屏经典
+    case '4:3':  return { maxWidth: '133.33vh', margin: '0 auto' }; // 横屏经典
+    default:     return {}; // 16:9 默认全宽
+  }
+}
+
+// v6.0.83: ASPECT_RATIO_LABELS moved to shared utils/index.ts
+
+export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose, aspectRatio }: EpisodePlayerProps) {
   // 分镜数据
   const [storyboards, setStoryboards] = useState<Storyboard[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -43,54 +56,19 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
   // 进度控制
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  
-  // 🆕 视频URL签名状态
-  const [signedVideoUrl, setSignedVideoUrl] = useState<string>('');
-  const [isSigningUrl, setIsSigningUrl] = useState(false);
 
-  // 🆕 获取OSS签名URL
-  const getSignedUrl = async (url: string): Promise<string> => {
-    try {
-      // 只处理OSS URL
-      if (!url.includes('aliyuncs.com')) {
-        return url;
-      }
+  // 当前分镜 — 必须在所有引用它的 useEffect 之前声明
+  const currentStoryboard = storyboards[currentIndex];
+  const hasVideo = currentStoryboard?.videoUrl;
 
-      console.log('[EpisodePlayer] Getting signed URL for:', url.substring(0, 100) + '...');
-      setIsSigningUrl(true);
-
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-fc31472c/oss/sign-url`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify({ url }),
-      });
-
-      if (!response.ok) {
-        console.error('[EpisodePlayer] Failed to sign URL:', response.status, await response.text());
-        return url; // 返回原URL作为fallback
-      }
-
-      const result = await response.json();
-      if (result.success && result.data?.signedUrl) {
-        console.log('[EpisodePlayer] ✅ Got signed URL');
-        return result.data.signedUrl;
-      }
-      
-      console.error('[EpisodePlayer] Sign URL response invalid:', result);
-      return url;
-    } catch (error: any) {
-      console.error('[EpisodePlayer] Error signing URL:', error);
-      return url;
-    } finally {
-      setIsSigningUrl(false);
-    }
-  };
+  // HLS 视频播放器 hook（含 URL 签名 + HLS 初始化）
+  const { videoRef, signedVideoUrl } = useHlsPlayer({
+    videoUrl: currentStoryboard?.videoUrl,
+    currentIndex,
+    isMuted,
+    isPlaying,
+  });
 
   // 加载分镜数据
   useEffect(() => {
@@ -102,20 +80,16 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
     setError(null);
 
     try {
-      console.log('[EpisodePlayer] Loading storyboards for episode:', episodeId);
-      
       const result = await apiRequest(`/episodes/${episodeId}/storyboards`, {
         method: 'GET',
       });
 
       if (result.success && result.data) {
-        // 只保留有视频的分镜，并按场景号排序
+        // 只保留有视频的分镜，并场景号排序
         const validStoryboards = result.data
           .filter((sb: Storyboard) => sb.videoUrl && sb.status === 'completed')
           .sort((a: Storyboard, b: Storyboard) => a.sceneNumber - b.sceneNumber);
 
-        console.log('[EpisodePlayer] ✅ Loaded', validStoryboards.length, 'storyboards with videos');
-        
         if (validStoryboards.length === 0) {
           setError('该剧集暂无可播放的视频');
         } else {
@@ -125,107 +99,20 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
         setError(result.error || '加载失败');
       }
     } catch (err: any) {
-      console.error('[EpisodePlayer] Error loading storyboards:', err);
+      console.warn('[EpisodePlayer] Error loading storyboards:', err.message);
       setError(err.message || '加载失败');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 🆕 当当前分镜改变时，获取签名URL并初始化播放器
-  useEffect(() => {
-    const initializeVideo = async () => {
-      if (!currentStoryboard?.videoUrl || !videoRef.current) return;
-
-      // 清理之前的HLS实例
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-
-      console.log('[EpisodePlayer] Initializing video for scene:', currentStoryboard.sceneNumber);
-      
-      // 获取签名URL
-      const finalUrl = await getSignedUrl(currentStoryboard.videoUrl);
-      setSignedVideoUrl(finalUrl);
-
-      const video = videoRef.current;
-      const isM3U8 = finalUrl.endsWith('.m3u8') || finalUrl.includes('.m3u8?');
-
-      if (isM3U8 && Hls.isSupported()) {
-        // 使用HLS.js播放M3U8
-        console.log('[EpisodePlayer] Using HLS.js for M3U8');
-        const hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: false,
-        });
-        
-        hlsRef.current = hls;
-        
-        hls.loadSource(finalUrl);
-        hls.attachMedia(video);
-        
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          console.log('[EpisodePlayer] HLS manifest parsed');
-          video.muted = isMuted;
-          if (isPlaying) {
-            video.play().catch(err => console.error('[EpisodePlayer] Play error:', err));
-          }
-        });
-        
-        hls.on(Hls.Events.ERROR, (event, data) => {
-          console.error('[EpisodePlayer] HLS error:', data);
-          if (data.fatal) {
-            switch (data.type) {
-              case Hls.ErrorTypes.NETWORK_ERROR:
-                console.error('[EpisodePlayer] Fatal network error, retrying...');
-                hls.startLoad();
-                break;
-              case Hls.ErrorTypes.MEDIA_ERROR:
-                console.error('[EpisodePlayer] Fatal media error, recovering...');
-                hls.recoverMediaError();
-                break;
-              default:
-                console.error('[EpisodePlayer] Fatal error, destroying HLS');
-                hls.destroy();
-                break;
-            }
-          }
-        });
-      } else if (isM3U8 && video.canPlayType('application/vnd.apple.mpegurl')) {
-        // iOS/Safari原生支持HLS
-        console.log('[EpisodePlayer] Using native HLS support');
-        video.src = finalUrl;
-      } else {
-        // 普通MP4
-        console.log('[EpisodePlayer] Using standard video playback');
-        video.src = finalUrl;
-      }
-    };
-
-    initializeVideo();
-
-    return () => {
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-    };
-  }, [currentIndex, currentStoryboard?.videoUrl]);
-
-  // 当前分镜
-  const currentStoryboard = storyboards[currentIndex];
-  const hasVideo = currentStoryboard?.videoUrl;
-
   // 播放下一个分镜
   const playNext = () => {
     if (currentIndex < storyboards.length - 1) {
-      console.log('[EpisodePlayer] Playing next storyboard');
       setCurrentIndex(currentIndex + 1);
       setCurrentTime(0);
       setIsPlaying(true);
     } else {
-      console.log('[EpisodePlayer] Reached end of episode');
       // 播放完毕，暂停
       setIsPlaying(false);
     }
@@ -234,7 +121,6 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
   // 播放上一个分镜
   const playPrevious = () => {
     if (currentIndex > 0) {
-      console.log('[EpisodePlayer] Playing previous storyboard');
       setCurrentIndex(currentIndex - 1);
       setCurrentTime(0);
       setIsPlaying(true);
@@ -247,7 +133,6 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
 
     const video = videoRef.current;
     const handleEnded = () => {
-      console.log('[EpisodePlayer] Video ended, playing next');
       playNext();
     };
 
@@ -268,7 +153,7 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
         setIsFullscreen(false);
       }
     } catch (err) {
-      console.error('[EpisodePlayer] Fullscreen error:', err);
+      console.warn('[EpisodePlayer] Fullscreen error:', err);
     }
   };
 
@@ -319,13 +204,6 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isPlaying, isMuted, currentIndex]);
 
-  // 格式化时间
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
   // 计算总进度
   const totalDuration = storyboards.reduce((sum, sb) => sum + (sb.duration || 0), 0);
   const elapsedDuration = storyboards.slice(0, currentIndex).reduce((sum, sb) => sum + (sb.duration || 0), 0) + currentTime;
@@ -344,7 +222,14 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
         <div className="flex items-center justify-between">
           <div className="flex-1">
             <h2 className="text-white text-lg font-bold truncate">{episodeTitle}</h2>
-            <p className="text-gray-300 text-sm truncate">{seriesTitle}</p>
+            <div className="flex items-center gap-2">
+              <p className="text-gray-300 text-sm truncate">{seriesTitle}</p>
+              {aspectRatio && (
+                <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-gray-300 font-medium">
+                  {aspectRatio} {ASPECT_RATIO_LABELS[aspectRatio] || ''}
+                </span>
+              )}
+            </div>
           </div>
           
           <button
@@ -371,8 +256,8 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
         </div>
       </div>
 
-      {/* 视频播放区 */}
-      <div className="w-full h-full flex items-center justify-center">
+      {/* 视频播放区 — v6.0.80: 根据画面比例约束容器宽度 */}
+      <div className="w-full h-full flex items-center justify-center" style={getAspectRatioStyle(aspectRatio)}>
         {isLoading ? (
           <div className="text-center">
             <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-white mx-auto mb-4" />
@@ -400,13 +285,13 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
             src={signedVideoUrl}
             className="w-full h-full object-contain"
             controls={false}
-            onError={() => console.error('[EpisodePlayer] Video error')}
+            onError={() => { /* video error handled by HLS or native */ }}
             onLoadedMetadata={() => {
               if (videoRef.current) {
                 setDuration(videoRef.current.duration);
                 videoRef.current.muted = isMuted;
                 if (isPlaying) {
-                  videoRef.current.play().catch(err => console.error('Play error:', err));
+                  videoRef.current.play().catch(() => { /* autoplay blocked */ });
                 }
               }
             }}
@@ -490,7 +375,7 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose }:
                 setIsPlaying(!isPlaying);
                 if (videoRef.current) {
                   if (!isPlaying) {
-                    videoRef.current.play().catch(err => console.error('Play error:', err));
+                    videoRef.current.play().catch(() => { /* autoplay blocked */ });
                   } else {
                     videoRef.current.pause();
                   }

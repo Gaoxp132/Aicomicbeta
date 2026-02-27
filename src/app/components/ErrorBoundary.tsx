@@ -61,7 +61,7 @@ function DefaultFallback({ error, errorInfo, resetError }: FallbackProps) {
             </p>
           </div>
 
-          {process.env.NODE_ENV === 'development' && errorInfo && (
+          {import.meta.env.DEV && errorInfo && (
             <details className="bg-slate-800/50 rounded-lg p-4">
               <summary className="text-sm font-semibold text-slate-300 cursor-pointer mb-2">
                 详细堆栈信息（开发模式）
@@ -121,8 +121,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     // 记录错误
-    console.error('[ErrorBoundary] Caught error:', error);
-    console.error('[ErrorBoundary] Error info:', errorInfo);
+    console.error('[ErrorBoundary] Caught error:', error.message, errorInfo.componentStack?.slice(0, 200));
 
     // 更新状态
     this.setState((prevState) => ({
@@ -173,7 +172,7 @@ export class ErrorBoundary extends Component<Props, State> {
         url: window.location.href,
       };
 
-      console.log('[ErrorBoundary] Error data:', errorData);
+      console.error('[ErrorBoundary] Error data:', JSON.stringify({ message: errorData.message, url: errorData.url }));
 
       // 示例：发送到后端
       // fetch('/api/log-error', {
@@ -182,7 +181,7 @@ export class ErrorBoundary extends Component<Props, State> {
       //   body: JSON.stringify(errorData),
       // }).catch(console.error);
     } catch (loggingError) {
-      console.error('[ErrorBoundary] Failed to log error:', loggingError);
+      // Failed to log, ignore
     }
   }
 
@@ -207,133 +206,3 @@ export class ErrorBoundary extends Component<Props, State> {
     return this.props.children;
   }
 }
-
-/**
- * 函数式错误边界Hook（React 18+）
- */
-export function useErrorHandler(
-  error?: Error | null
-): (error: Error) => void {
-  const [, setError] = React.useState<Error | null>(null);
-
-  React.useEffect(() => {
-    if (error) {
-      setError(() => {
-        throw error;
-      });
-    }
-  }, [error]);
-
-  return React.useCallback((error: Error) => {
-    setError(() => {
-      throw error;
-    });
-  }, []);
-}
-
-/**
- * 包装组件的错误边界HOC
- */
-export function withErrorBoundary<P extends object>(
-  Component: React.ComponentType<P>,
-  errorBoundaryProps?: Omit<Props, 'children'>
-): React.FC<P> {
-  const WrappedComponent: React.FC<P> = (props) => (
-    <ErrorBoundary {...errorBoundaryProps}>
-      <Component {...props} />
-    </ErrorBoundary>
-  );
-
-  WrappedComponent.displayName = `withErrorBoundary(${
-    Component.displayName || Component.name || 'Component'
-  })`;
-
-  return WrappedComponent;
-}
-
-/**
- * 异步错误边界 - 捕获Promise错误
- */
-export class AsyncErrorBoundary extends Component<Props, State> {
-  constructor(props: Props) {
-    super(props);
-    this.state = {
-      hasError: false,
-      error: null,
-      errorInfo: null,
-      errorCount: 0,
-    };
-  }
-
-  componentDidMount() {
-    // 捕获未处理的Promise拒绝
-    window.addEventListener('unhandledrejection', this.handlePromiseRejection);
-  }
-
-  componentWillUnmount() {
-    window.removeEventListener('unhandledrejection', this.handlePromiseRejection);
-  }
-
-  handlePromiseRejection = (event: PromiseRejectionEvent) => {
-    event.preventDefault();
-    const error = event.reason instanceof Error 
-      ? event.reason 
-      : new Error(String(event.reason));
-
-    console.error('[AsyncErrorBoundary] Unhandled promise rejection:', error);
-
-    this.setState({
-      hasError: true,
-      error,
-      errorCount: this.state.errorCount + 1,
-    });
-
-    this.props.onError?.(error, {} as ErrorInfo);
-  };
-
-  static getDerivedStateFromError(error: Error): Partial<State> {
-    return {
-      hasError: true,
-      error,
-    };
-  }
-
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('[AsyncErrorBoundary] Caught error:', error);
-    this.setState({
-      errorInfo,
-      errorCount: this.state.errorCount + 1,
-    });
-    this.props.onError?.(error, errorInfo);
-  }
-
-  resetError = () => {
-    this.setState({
-      hasError: false,
-      error: null,
-      errorInfo: null,
-    });
-  };
-
-  render() {
-    if (this.state.hasError) {
-      const FallbackComponent = this.props.FallbackComponent || DefaultFallback;
-
-      if (this.props.fallback) {
-        return this.props.fallback;
-      }
-
-      return (
-        <FallbackComponent
-          error={this.state.error}
-          errorInfo={this.state.errorInfo}
-          resetError={this.resetError}
-        />
-      );
-    }
-
-    return this.props.children;
-  }
-}
-
-console.log('[ErrorBoundary] ✅ Error boundary components initialized');

@@ -1,20 +1,15 @@
+import * as communityAPI from '../services';
+import { shareContent } from '../utils';
 import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from './ui/button';
-import { CommunityHeader } from './community/CommunityHeader';
-import { CategoryFilter } from './community/CategoryFilter';
-import { WorkCard } from './community/WorkCard';
-import { SeriesCard } from './community/SeriesCard';
+import { Button } from './ui';
+import { CommunityHeader, CategoryFilter, WorkCard, SeriesCard } from './community/widgets';
+import type { CategoryType, SortType } from './community/widgets';
 import { SeriesViewer } from './community/SeriesViewer';
-import { useCommunityWorks } from '../hooks/useCommunityWorks';
-import { useCommunitySeries } from '../hooks/useCommunitySeries';
-import { useCommunityInteractions } from '../hooks/useCommunityInteractions';
-import type { CategoryType } from './community/CategoryFilter';
-import type { SortType } from './community/CommunityHeader';
+import { useCommunityWorks, useCommunitySeries, useCommunityInteractions } from '../hooks';
 import type { CommunitySeriesWork, Comic } from '../types';
-import * as communityAPI from '../services/community';
 
 interface CommunityPanelProps {
   onSelectComic: (comic: Comic, comicsList?: Comic[]) => void;
@@ -22,6 +17,7 @@ interface CommunityPanelProps {
 }
 
 export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps) {
+  // v6.0.37: 默认选中"全部"而不是"漫剧系列"
   const [selectedCategory, setSelectedCategory] = useState<CategoryType>('all');
   const [sortBy, setSortBy] = useState<SortType>('latest');
   const [searchQuery, setSearchQuery] = useState('');
@@ -81,7 +77,6 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
 
   // 🆕 手动刷新所有数据
   const handleManualRefresh = async () => {
-    console.log('[CommunityPanel] 🔄 Manual refresh triggered');
     toast.success('正在刷新...');
     await Promise.all([
       refreshNewWorks(),
@@ -92,23 +87,35 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
 
   // 处理漫剧系列点击 - 🔥 修复：先获取详情再打开播放器
   const handleSeriesClick = async (clickedSeries: CommunitySeriesWork) => {
-    console.log('[CommunityPanel] Series clicked:', clickedSeries.id, clickedSeries.title);
-    
     // 🔥 先获取完整的漫剧详情（包含episodes和videoUrl）
     try {
       const result = await communityAPI.getSeriesDetail(clickedSeries.id, userPhone);
       
       if (result.success && result.data) {
-        console.log('[CommunityPanel] ✅ Series detail loaded with', result.data.episodes?.length || 0, 'episodes');
         // 使用包含完整数据的详情打开播放器
         setSelectedSeries(result.data);
       } else {
-        console.error('[CommunityPanel] ❌ Failed to load series detail:', result.error);
         toast.error('无法加载漫剧详情');
       }
     } catch (error: any) {
       console.error('[CommunityPanel] Series detail error:', error);
       toast.error('加载失败，请稍后重试');
+    }
+  };
+
+  // v6.0.18: 推荐作品导航——仅凭ID获取详情并打开播放器
+  const handleNavigateToSeries = async (seriesId: string) => {
+    try {
+      toast('正在加载推荐作品...', { duration: 1500 });
+      const result = await communityAPI.getSeriesDetail(seriesId, userPhone);
+      if (result.success && result.data) {
+        setSelectedSeries(result.data);
+      } else {
+        toast.error('无法加载推荐作品');
+      }
+    } catch (error: any) {
+      console.error('[CommunityPanel] Navigate to series error:', error);
+      toast.error('加载推荐作品失败');
     }
   };
 
@@ -149,46 +156,59 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
   };
 
   // 处理漫剧系列评论
-  const handleSeriesComment = (clickedSeries: CommunitySeriesWork, e: React.MouseEvent) => {
+  const handleSeriesComment = async (clickedSeries: CommunitySeriesWork, e: React.MouseEvent) => {
     e.stopPropagation();
     
-    // 打开漫剧查看器并显示评论区
-    setSelectedSeries(clickedSeries);
+    // v5.5.0: 也先获取详情（确保episodes包含auto-constructed playlists）
+    try {
+      const result = await communityAPI.getSeriesDetail(clickedSeries.id, userPhone);
+      if (result.success && result.data) {
+        setSelectedSeries(result.data);
+      } else {
+        setSelectedSeries(clickedSeries);
+      }
+    } catch {
+      setSelectedSeries(clickedSeries);
+    }
   };
 
-  // 处理漫剧系列分享
-  const handleSeriesShare = async (seriesId: string, e: React.MouseEvent) => {
+  // 处理漫剧系列分享 — v6.0.60: 使用共享shareUtils
+  const handleSeriesShare = async (seriesId: string, seriesTitle: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    
+
+    // 1. 实际分享动作
+    const result = await shareContent({
+      title: seriesTitle || 'AI漫剧',
+      text: `${seriesTitle || 'AI漫剧'} - 快来看看这部AI漫剧!`,
+      url: window.location.href,
+    });
+
+    if (result === 'cancelled') return;
+    if (result === 'copied') {
+      toast.success('链接已复制到剪贴板');
+    } else if (result === 'shared') {
+      toast.success('分享成功');
+    } else {
+      toast.error('分享失败，请手动复制链接');
+      return;
+    }
+
+    // 2. 成功后递增后端计数
     try {
-      const result = await communityAPI.shareSeries(seriesId);
-      if (result.success) {
-        // 更新分享数
-        setSeriesInteractions(prev => {
-          const newMap = new Map(prev);
-          const current = newMap.get(seriesId);
-          if (current) {
-            newMap.set(seriesId, {
-              ...current,
-              shares: current.shares + 1,
-            });
-          }
-          return newMap;
-        });
-        
-        // 复制分享链接到剪贴板
-        const shareUrl = `${window.location.origin}/series/${seriesId}`;
-        navigator.clipboard.writeText(shareUrl).then(() => {
-          toast.success('分享链接已复制到剪贴板');
-        }).catch(() => {
-          toast.success('分享成功');
-        });
-      } else {
-        toast.error(result.error || '分享失败');
-      }
-    } catch (error: any) {
-      console.error('[CommunityPanel] Series share error:', error);
-      toast.error('分享失败，请稍后重试');
+      await communityAPI.shareSeries(seriesId);
+      setSeriesInteractions(prev => {
+        const newMap = new Map(prev);
+        const current = newMap.get(seriesId);
+        if (current) {
+          newMap.set(seriesId, {
+            ...current,
+            shares: current.shares + 1,
+          });
+        }
+        return newMap;
+      });
+    } catch (error) {
+      console.error('[CommunityPanel] Series share count error:', error);
     }
   };
 
@@ -213,8 +233,6 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
     if (hasInitialLoad && !isLoading && !isLoadingMore && !isPulling && (works.length > 0 || series.length > 0)) {
       if (pullDistance > 50) {
         // 🆕 下拉刷新：增量更新新数据
-        console.log('[CommunityPanel] 🔄 Pull to refresh triggered');
-        
         Promise.all([
           refreshNewWorks(), // 刷新单集作品
           refreshSeriesNewData(), // 🔥 增量刷新系列数据
@@ -313,7 +331,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
                   onCardClick={() => handleSeriesClick(seriesItem)}
                   onLike={(e) => handleSeriesLike(seriesItem.id, e)}
                   onComment={(e) => handleSeriesComment(seriesItem, e)}
-                  onShare={(e) => handleSeriesShare(seriesItem.id, e)}
+                  onShare={(e) => handleSeriesShare(seriesItem.id, seriesItem.title, e)}
                 />
               ))}
 
@@ -333,7 +351,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
                   onCardClick={() => handleWorkClick(work, works)}
                   onLike={(e) => handleLike(work.id, e, setWorkInteractions)}
                   onComment={(e) => handleComment(work, works, e)}
-                  onShare={(e) => handleShare(work.id, e, setWorkInteractions)}
+                  onShare={(e) => handleShare(work.id, e, setWorkInteractions, work.title)}
                 />
               ))}
             </div>
@@ -372,6 +390,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
             series={selectedSeries}
             userPhone={userPhone}
             onClose={() => setSelectedSeries(null)}
+            onNavigateToSeries={handleNavigateToSeries}
           />
         )}
       </AnimatePresence>

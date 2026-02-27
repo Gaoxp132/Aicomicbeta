@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Smartphone, Loader2, CheckCircle2 } from 'lucide-react';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { SocialLoginButtons } from './SocialLoginButtons';
-import * as communityAPI from '../services/community';
+import { Button, Input } from './ui';
+import { apiPost } from '../utils';
+import { STORAGE_KEYS, VALIDATION } from '../constants';
+import { toast } from 'sonner';
 
 interface LoginDialogProps {
   isOpen: boolean;
@@ -18,40 +18,28 @@ export function LoginDialog({ isOpen, onClose, onLoginSuccess }: LoginDialogProp
 
   const handleLogin = async () => {
     // 验证手机号格式
-    const phoneRegex = /^1[3-9]\d{9}$/;
-    if (!phoneRegex.test(phoneNumber)) {
-      console.error('Invalid phone number format');
+    if (!VALIDATION.PHONE_REGEX.test(phoneNumber)) {
+      toast.error('请输入正确的11位手机号');
       return;
     }
 
     setIsLoading(true);
 
-    try {
-      const response = await fetch(
-        'https://cjjbxfzwjhnuwkqsntop.supabase.co/functions/v1/make-server-fc31472c/user/login',
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqamJ4Znp3amhudXdrcXNudG9wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzU3MjMzMjYsImV4cCI6MjA1MTI5OTMyNn0.I6sOTXo_NLBCWWSu_Jy4rbvj7rz-7K-o7I7RWmQXg_I`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ phoneNumber }),
-        }
-      );
+    const result = await apiPost('/user/login', { phone: phoneNumber });
 
-      const result = await response.json();
-      
-      localStorage.setItem('userPhone', phoneNumber);
-      localStorage.setItem('loginTime', new Date().toISOString());
+    if (result.success) {
+      localStorage.setItem(STORAGE_KEYS.USER_PHONE, phoneNumber);
+      localStorage.setItem(STORAGE_KEYS.LOGIN_TIME, new Date().toISOString());
       
       onLoginSuccess(phoneNumber);
       onClose();
       setPhoneNumber('');
-    } catch (error) {
-      console.error('登录失败:', error);
-    } finally {
-      setIsLoading(false);
+      toast.success('登录成功');
+    } else {
+      toast.error(result.error || '登录失败，请稍后重试');
     }
+
+    setIsLoading(false);
   };
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -78,7 +66,7 @@ export function LoginDialog({ isOpen, onClose, onLoginSuccess }: LoginDialogProp
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="bg-gradient-to-br from-gray-900 to-black border border-white/10 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl"
+              className="bg-gradient-to-br from-gray-900 to-black border border-white/10 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl relative"
             >
               {/* 关闭按钮 */}
               <button
@@ -97,10 +85,10 @@ export function LoginDialog({ isOpen, onClose, onLoginSuccess }: LoginDialogProp
 
               {/* 标题 */}
               <h2 className="text-2xl font-bold text-white text-center mb-2">
-                欢迎来到AI漫剧创作
+                开始你的创作之旅
               </h2>
               <p className="text-gray-400 text-center mb-8 text-sm">
-                输入手机号即可登录，开启你的创作之旅
+                输入手机号即可登录，AI将帮你创作专属漫剧
               </p>
 
               {/* 手机号输入 */}
@@ -145,9 +133,6 @@ export function LoginDialog({ isOpen, onClose, onLoginSuccess }: LoginDialogProp
                   '立即登录'
                 )}
               </Button>
-
-              {/* 社交登录按钮 */}
-              <SocialLoginButtons />
 
               {/* 隐私提示 */}
               <p className="text-xs text-gray-500 text-center mt-6">

@@ -1,17 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { X } from 'lucide-react';
+import { motion } from 'motion/react';
+import { X, Heart, MessageCircle, Share2, Download } from 'lucide-react';
 import { toast } from 'sonner';
-import * as communityAPI from '../services/community';
-import { VideoPlayer } from './immersive/VideoPlayer';
-import { InteractionBar } from './immersive/InteractionBar';
-import { CommentSection } from './immersive/CommentSection';
-import { ShareMenu } from './immersive/ShareMenu';
-import { useFullscreen } from '../hooks/useFullscreen';
-import { useLike } from '../hooks/useLike';
-import { useComments } from '../hooks/useComments';
-import { useVideoPlayer } from '../hooks/useVideoPlayer';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import * as communityAPI from '../services';
+import { VideoPlayer, InteractionBar, CommentSection, useImmersiveSharing, useImmersiveNavigation } from './immersive';
+import { useFullscreen, useLike, useComments, useVideoPlayer } from '../hooks';
+import { apiPost, ASPECT_RATIO_LABELS } from '../utils';
 
 interface ImmersiveVideoViewerProps {
   work: any;
@@ -26,21 +20,20 @@ export function ImmersiveVideoViewer({ work, allWorks, userPhone, onClose, onWor
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
+  // v6.0.80: 从work对象提取画面比例（可能来自metadata或直接字段）
+  const aspectRatio = work.aspectRatio || work.metadata?.aspectRatio || undefined;
+  
   // 视频URL状态
-  const [currentVideoUrl, setCurrentVideoUrl] = useState(work.videoUrl || work.video_url);
+  const [currentVideoUrl, setCurrentVideoUrl] = useState(() => {
+    const url = work.videoUrl || work.video_url || '';
+    return url;
+  });
   const [urlExpired, setUrlExpired] = useState(false);
-  const [isLoadingVideo, setIsLoadingVideo] = useState(false); // ✨ 添加视频加载状态
-  // 🆕 签名URL状态
+  const [isLoadingVideo, setIsLoadingVideo] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  // 签名URL状态
   const [signedVideoUrl, setSignedVideoUrl] = useState<string>('');
   const [isSigningUrl, setIsSigningUrl] = useState(false);
-  
-  // 🆕 滑动相关状态
-  const touchStartY = useRef(0);
-  const touchStartTime = useRef(0);
-  const [isSwiping, setIsSwiping] = useState(false);
-  const lastWheelTime = useRef(0); // 🆕 用于防抖的时间戳
-  const isSwitching = useRef(false); // ✨ 添加切换锁，避免快速连续切换
-  const isClosing = useRef(false); // 🆕 添加关闭标志，防止关闭时触发事件
   
   const {
     isPlaying,
@@ -74,53 +67,50 @@ export function ImmersiveVideoViewer({ work, allWorks, userPhone, onClose, onWor
     setShowComments,
     handleComment,
   } = useComments(work.id, userPhone);
-  
-  // 分享状态
-  const [showShareMenu, setShowShareMenu] = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
 
-  // 🆕 获取OSS签名URL
+  // 分享逻辑 hook
+  const {
+    handleShare,
+    handleDownload,
+  } = useImmersiveSharing({ work });
+
+  // 导航逻辑 hook
+  const {
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
+    handleWheel,
+    markClosing,
+  } = useImmersiveNavigation({
+    work,
+    allWorks,
+    onWorkChange,
+    showComments,
+    setIsPlaying,
+    setCurrentTime,
+    setCurrentVideoUrl,
+    setUrlExpired,
+    setIsLoadingVideo,
+  });
+
+  // 获取OSS签名URL
   const getSignedUrl = async (url: string): Promise<string> => {
-    try {
-      // 只处理OSS URL
-      if (!url.includes('aliyuncs.com')) {
-        return url;
-      }
-
-      console.log('[ImmersiveVideoViewer] Getting signed URL for:', url.substring(0, 100) + '...');
-      setIsSigningUrl(true);
-
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-fc31472c/oss/sign-url`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify({ url }),
-      });
-
-      if (!response.ok) {
-        console.error('[ImmersiveVideoViewer] Failed to sign URL:', response.status, await response.text());
-        return url; // 返回原URL作为fallback
-      }
-
-      const result = await response.json();
-      if (result.success && result.data?.signedUrl) {
-        console.log('[ImmersiveVideoViewer] ✅ Got signed URL');
-        return result.data.signedUrl;
-      }
-      
-      console.error('[ImmersiveVideoViewer] Sign URL response invalid:', result);
+    if (!url.includes('aliyuncs.com')) {
       return url;
-    } catch (error: any) {
-      console.error('[ImmersiveVideoViewer] Error signing URL:', error);
-      return url;
-    } finally {
-      setIsSigningUrl(false);
     }
+
+    setIsSigningUrl(true);
+    const result = await apiPost('oss/sign-url', { url });
+    setIsSigningUrl(false);
+
+    if (result.success && result.data?.signedUrl) {
+      return result.data.signedUrl;
+    }
+    
+    return url;
   };
 
-  // ✨ 检查URL是否过期
+  // 检查URL是否过期
   const checkUrlExpired = (url: string): boolean => {
     const urlDateMatch = url.match(/X-Tos-Date=(\d{8})/);
     if (!urlDateMatch) return false;
@@ -131,56 +121,38 @@ export function ImmersiveVideoViewer({ work, allWorks, userPhone, onClose, onWor
     return urlDate < today;
   };
 
-  // 🆕 初始化 - 获取签名URL
+  // 初始化 - 获取签名URL
   useEffect(() => {
     const initializeVideo = async () => {
-      // 调试：打印 work 数据
-      console.log('[ImmersiveVideoViewer] Work data:', {
-        id: work.id,
-        title: work.title,
-        videoUrl: work.videoUrl,
-        video_url: work.video_url,
-        thumbnail: work.thumbnail,
-        prompt: work.prompt,
-        task_id: work.task_id,
-        taskId: work.taskId,
-      });
+      const urlString = work.videoUrl || work.video_url || '';
       
-      // 🎬 自动播放视频
+      if (!urlString || urlString.trim() === '' || !urlString.startsWith('http')) {
+        console.warn('[ImmersiveVideoViewer] No valid video URL for work:', work.id, 'url:', urlString);
+        setVideoError('视频尚未生成或URL不可用');
+        return;
+      }
+      
+      setCurrentVideoUrl(urlString);
       setIsPlaying(true);
       
-      // 检查URL是否已过期
-      const urlString = work.videoUrl || work.video_url || '';
-      setCurrentVideoUrl(urlString);
-      
-      // 如果URL已经是OSS URL，获取签名URL
+      // 如果URL是OSS URL，获取签名URL
       if (urlString.includes('aliyuncs.com') || urlString.includes('oss-')) {
-        console.log('[ImmersiveVideoViewer] ✅ Video is on OSS, getting signed URL');
         const signed = await getSignedUrl(urlString);
         setSignedVideoUrl(signed);
         communityAPI.incrementViews(work.id).catch(() => {});
         return;
       }
       
-      // 否则检查是否过期
+      // 检查是否过期
       const isExpired = checkUrlExpired(urlString);
       
       if (isExpired) {
-        const urlDateMatch = urlString.match(/X-Tos-Date=(\d{8})/);
-        const urlDate = urlDateMatch ? urlDateMatch[1] : 'unknown';
-        const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        
-        console.error('[ImmersiveVideoViewer] ❌ Video URL is expired (from', urlDate, ', today is', today, ')');
-        console.error('[ImmersiveVideoViewer] This video should have been filtered out');
-        
-        // ❌ 直接关闭查看器，不显示过期视频
-        toast.error('视频链接已过期');
-        onClose();
-        return;
+        // 不要直接关闭，而是显示过期覆盖层让用户尝试恢复
+        setSignedVideoUrl(urlString); // 仍然设置URL，让恢复按钮有context
+        setUrlExpired(true);
+        communityAPI.incrementViews(work.id).catch(() => {});
       } else {
-        console.log('[ImmersiveVideoViewer] ✅ Video URL is fresh');
         setSignedVideoUrl(urlString);
-        // 增加浏览量
         communityAPI.incrementViews(work.id).catch(() => {});
       }
     };
@@ -189,312 +161,52 @@ export function ImmersiveVideoViewer({ work, allWorks, userPhone, onClose, onWor
   }, [work.id, work.videoUrl, work.video_url, onClose]);
 
   const handleVideoError = async () => {
-    console.log('[ImmersiveVideoViewer] 🔄 Video playback error detected');
-    
-    // 检查是否是因为URL过期
     const urlString = currentVideoUrl || '';
     const isExpired = checkUrlExpired(urlString);
     
     if (isExpired || urlString.includes('volces.com')) {
-      console.error('[ImmersiveVideoViewer] ❌ Video URL is expired or from Volcengine');
-      console.error('[ImmersiveVideoViewer] This video should have been auto-transferred to OSS');
+      console.error('[ImmersiveVideoViewer] Video URL is expired or from Volcengine');
       setUrlExpired(true);
     } else {
-      console.error('[ImmersiveVideoViewer] ❌ Video playback failed for unknown reason');
+      console.error('[ImmersiveVideoViewer] Video playback failed for unknown reason');
       setUrlExpired(true);
     }
   };
 
-  const handleShare = async () => {
-    setShowShareMenu(!showShareMenu);
-  };
-
-  const handleDownload = async () => {
-    try {
-      const videoUrl = work.videoUrl || work.video_url;
-      
-      // 方案1: 尝试使用 <a> 标签直接下载（适用于同源或配置了CORS的资源）
-      const a = document.createElement('a');
-      a.href = videoUrl;
-      a.download = `${work.title || 'video'}.mp4`;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      
-      // 某些浏览器需要将元素添加到DOM
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      
-      console.log('Download initiated for:', work.title);
-    } catch (error) {
-      console.error('Failed to download video:', error);
-      // 如果下载失败，在新标签页打开视频
-      window.open(work.videoUrl || work.video_url, '_blank');
-    }
-  };
-
-  const handleCopyLink = async () => {
-    const url = window.location.href;
-    
-    // 优先使用 Clipboard API
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      try {
-        await navigator.clipboard.writeText(url);
-        setLinkCopied(true);
-        setTimeout(() => setLinkCopied(false), 2000);
-        return; // 成功则直接返回
-      } catch (clipboardError) {
-        // 静默处理 Clipboard API 错误，直接降级
-        // 不打印错误日志，避免控制台报错
-      }
-    }
-    
-    // 降级方案1：使用传统的 document.execCommand
-    const textArea = document.createElement('textarea');
-    textArea.value = url;
-    textArea.style.position = 'fixed';
-    textArea.style.left = '-999999px';
-    textArea.style.top = '-999999px';
-    document.body.appendChild(textArea);
-    textArea.focus();
-    textArea.select();
-    
-    try {
-      const successful = document.execCommand('copy');
-      if (successful) {
-        setLinkCopied(true);
-        setTimeout(() => setLinkCopied(false), 2000);
-        document.body.removeChild(textArea);
-        return; // 成功则返回
-      }
-    } catch (err) {
-      // execCommand 失败也静默处理
-    }
-    
-    document.body.removeChild(textArea);
-    
-    // 降级方案2：显示链接让用户手动复制
-    try {
-      prompt('请复制以下链接：', url);
-    } catch (promptError) {
-      // 如果连 prompt 都失败，则完全静默（极少见）
-    }
-  };
-
-  const handleWeChatShare = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: work.title || '精彩视频',
-          text: work.prompt || '快来看看这个精彩视频！',
-          url: window.location.href,
-        });
-      } catch (error) {
-        console.error('Failed to share:', error);
-      }
-    }
-  };
-
-  // 🎯 切换视频的核心逻辑
-  const switchVideo = (direction: 'up' | 'down') => {
-    // ✨ 使用切换锁，避免快速连续切换导致卡顿
-    if (isSwitching.current) {
-      console.log('[ImmersiveVideoViewer] ⏭️ Already switching, ignoring');
-      return;
-    }
-    
-    console.log('[ImmersiveVideoViewer] 🔄 switchVideo called, direction:', direction);
-    console.log('[ImmersiveVideoViewer] Current work:', { id: work.id, title: work.title });
-    console.log('[ImmersiveVideoViewer] allWorks:', allWorks);
-    console.log('[ImmersiveVideoViewer] allWorks length:', allWorks?.length);
-    console.log('[ImmersiveVideoViewer] allWorks IDs:', allWorks?.map(w => w.id));
-    console.log('[ImmersiveVideoViewer] onWorkChange:', typeof onWorkChange);
-    
-    if (!allWorks || allWorks.length === 0) {
-      console.log('[ImmersiveVideoViewer] ❌ No videos available for switching');
-      return;
-    }
-    
-    if (allWorks.length === 1) {
-      console.log('[ImmersiveVideoViewer] ⚠️ Only one video available, cannot switch');
-      return;
-    }
-
-    if (!onWorkChange) {
-      console.log('[ImmersiveVideoViewer] ❌ onWorkChange callback not provided');
-      return;
-    }
-
-    const currentIndex = allWorks.findIndex(w => w.id === work.id);
-    console.log('[ImmersiveVideoViewer] Current work id:', work.id);
-    console.log('[ImmersiveVideoViewer] Current index:', currentIndex);
-    
-    if (currentIndex === -1) {
-      console.log('[ImmersiveVideoViewer] ❌ Current video not found in list');
-      console.log('[ImmersiveVideoViewer] Looking for ID:', work.id);
-      console.log('[ImmersiveVideoViewer] Available IDs:', allWorks.map(w => w.id));
-      return;
-    }
-
-    let nextIndex: number;
-    if (direction === 'up') {
-      // 上滑 = 看上一个视频（索引-1）
-      nextIndex = currentIndex - 1;
-      if (nextIndex < 0) {
-        console.log('[ImmersiveVideoViewer] ⚠️ Already at first video');
-        return;
-      }
-    } else {
-      // 下滑 = 看下一个视频（索引+1）
-      nextIndex = currentIndex + 1;
-      if (nextIndex >= allWorks.length) {
-        console.log('[ImmersiveVideoViewer] ⚠️ Already at last video');
-        return;
-      }
-    }
-
-    const nextWork = allWorks[nextIndex];
-    console.log('[ImmersiveVideoViewer] ✅ Switching to video at index', nextIndex, ':', nextWork.id, nextWork.title);
-    
-    // ✨ 设置切换锁
-    isSwitching.current = true;
+  // 尝试刷新视频URL
+  const handleRefreshVideo = async () => {
     setIsLoadingVideo(true);
-    
-    // ✨ 先暂停当前视频
-    setIsPlaying(false);
-    
-    // 切换视频
-    onWorkChange(nextWork);
-    setCurrentVideoUrl(nextWork.videoUrl || nextWork.video_url);
-    setUrlExpired(false);
-    
-    // ✨ 延迟解锁，给视频加载留出时间
-    setTimeout(() => {
-      isSwitching.current = false;
-      setIsLoadingVideo(false);
-      // 自动播放新视频
-      setIsPlaying(true);
-      setCurrentTime(0);
-    }, 500); // 500ms 后解锁
-  };
-
-  // 🆕 处理触摸滑动
-  const handleTouchStart = (e: React.TouchEvent) => {
-    // 如果评论区打开，不处理滑动
-    if (showComments) {
-      return;
-    }
-    
-    console.log('[ImmersiveVideoViewer] 👆 Touch start detected');
-    touchStartY.current = e.touches[0].clientY;
-    touchStartTime.current = Date.now();
-    setIsSwiping(false);
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (showComments) return;
-    
-    const deltaY = e.touches[0].clientY - touchStartY.current;
-    
-    console.log('[ImmersiveVideoViewer] 👉 Touch move, deltaY:', deltaY);
-    
-    // ✨ 降低阈值，让触摸更灵敏（类似抖音，20px就能触发）
-    if (Math.abs(deltaY) > 20) {
-      setIsSwiping(true);
-    }
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (showComments || !isSwiping) {
-      setIsSwiping(false);
-      return;
-    }
-    
-    const touchEndY = e.changedTouches[0].clientY;
-    const deltaY = touchEndY - touchStartY.current;
-    const deltaTime = Date.now() - touchStartTime.current;
-    
-    // ✨ 降低滑动阈值：滑动距离>50px 或 快速滑动>30px且时间<300ms
-    const isValidSwipe = Math.abs(deltaY) > 50 || (Math.abs(deltaY) > 30 && deltaTime < 300);
-    
-    console.log('[ImmersiveVideoViewer] 🎯 Touch end, deltaY:', deltaY, 'deltaTime:', deltaTime, 'valid:', isValidSwipe);
-    
-    if (isValidSwipe) {
-      if (deltaY > 0) {
-        // 向下滑动 = 看上一个视频
-        console.log('[ImmersiveVideoViewer] ⬇️ Swipe down detected, switching to previous video');
-        switchVideo('up');
+    try {
+      const result = await communityAPI.refreshVideoUrl(work.id);
+      if (result.success && result.videoUrl) {
+        setCurrentVideoUrl(result.videoUrl);
+        const signed = await getSignedUrl(result.videoUrl);
+        setSignedVideoUrl(signed);
+        setUrlExpired(false);
+        setIsPlaying(true);
+        toast.success('视频已恢复');
       } else {
-        // 向上滑动 = 看下一个视频
-        console.log('[ImmersiveVideoViewer] ⬆️ Swipe up detected, switching to next video');
-        switchVideo('down');
+        toast.error(result.error || '恢复失败，请重新生成视频');
       }
+    } catch (err: any) {
+      console.error('[ImmersiveVideoViewer] Refresh failed:', err);
+      toast.error('恢复失败: ' + (err.message || '未知错误'));
+    } finally {
+      setIsLoadingVideo(false);
     }
-    
-    setIsSwiping(false);
   };
 
-  // 🆕 处理鼠标滚轮（桌面端）
-  const handleWheel = (e: React.WheelEvent) => {
-    // 🚨 如果组件正在关闭，忽略所有交互
-    if (isClosing.current) {
-      console.log('[ImmersiveVideoViewer] ⏭️ Component is closing, ignoring wheel event');
-      return;
-    }
-    
-    // 如果评论区打开，不处理滚轮
-    if (showComments) {
-      return;
-    }
-    
-    console.log('[ImmersiveVideoViewer] 🖱️ Wheel event, deltaY:', e.deltaY);
-    
-    // ✨ 降低阈值，让滚轮更灵敏（类似抖音）
-    if (Math.abs(e.deltaY) < 10) {
-      console.log('[ImmersiveVideoViewer] ⏭️ Wheel delta too small, ignoring');
-      return;
-    }
-    
-    // 防抖：避免滚轮事件过于频繁
-    const currentTime = Date.now();
-    if (currentTime - lastWheelTime.current < 300) {
-      console.log('[ImmersiveVideoViewer] ⏭️ Wheel debounced (too fast)');
-      return;
-    }
-    
-    // 更新防抖时间戳
-    lastWheelTime.current = currentTime;
-    
-    console.log('[ImmersiveVideoViewer] 🎯 Valid wheel event, switching video, deltaY:', e.deltaY);
-    
-    if (e.deltaY < 0) {
-      // 向上滚动 = 看上一个视频
-      console.log('[ImmersiveVideoViewer] ⬆️ Wheel up detected, switching to previous video');
-      switchVideo('up');
-    } else {
-      // 向下滚动 = 看下一个视频
-      console.log('[ImmersiveVideoViewer] ⬇️ Wheel down detected, switching to next video');
-      switchVideo('down');
-    }
-  };
-  
-  // ✨ 禁用body滚动，组件卸载时恢复
+  // 禁用body滚动，组件卸载时恢复
   useEffect(() => {
-    console.log('[ImmersiveVideoViewer] 🔒 Disabling body scroll');
-    
-    // 保存原始样式
     const originalOverflow = document.body.style.overflow;
     const originalPosition = document.body.style.position;
     
-    // 禁用body滚动
     document.body.style.overflow = 'hidden';
     document.body.style.position = 'fixed';
     document.body.style.width = '100%';
     document.body.style.height = '100%';
     
-    // 清理函数：恢复滚动
     return () => {
-      console.log('[ImmersiveVideoViewer] 🔓 Restoring body scroll');
       document.body.style.overflow = originalOverflow;
       document.body.style.position = originalPosition;
       document.body.style.width = '';
@@ -513,14 +225,20 @@ export function ImmersiveVideoViewer({ work, allWorks, userPhone, onClose, onWor
       {/* 关闭按钮 */}
       <button
         onClick={() => {
-          console.log('[ImmersiveVideoViewer] 🚪 Close button clicked, setting closing flag');
-          isClosing.current = true; // 设置关闭标志，阻止所有后续交互
+          markClosing();
           onClose();
         }}
         className="absolute top-4 left-4 z-50 w-10 h-10 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center text-white hover:bg-black/70 transition-all"
       >
         <X className="w-6 h-6" />
       </button>
+
+      {/* v6.0.83: 画面比例标签 */}
+      {aspectRatio && (
+        <span className="absolute top-4 right-4 z-50 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm text-[11px] text-white/80 font-medium pointer-events-none">
+          {aspectRatio} {ASPECT_RATIO_LABELS[aspectRatio] || ''}
+        </span>
+      )}
 
       <div className="w-full h-full flex flex-col lg:flex-row">
         {/* 视频播放区 */}
@@ -540,29 +258,26 @@ export function ImmersiveVideoViewer({ work, allWorks, userPhone, onClose, onWor
             >
               <div className="max-w-md mx-4 p-8 bg-gradient-to-br from-red-500/20 to-orange-500/20 backdrop-blur-xl rounded-2xl border border-red-500/30 shadow-2xl">
                 <div className="text-center space-y-4">
-                  <div className="text-6xl">⚠️</div>
+                  <div className="text-6xl">&#9888;&#65039;</div>
                   <h3 className="text-2xl font-bold text-white">视频链接已过期</h3>
                   <p className="text-gray-300 leading-relaxed">
-                    由于火山引擎的安全策略，视频签名URL有效期仅为24时。<br />
-                    {currentVideoUrl && currentVideoUrl.match(/X-Tos-Date=(\d{8})/) ? (
-                      <>该视频生成于 <span className="font-mono text-yellow-400">{currentVideoUrl.match(/X-Tos-Date=(\d{8})/)?.[1]}</span>，已无法访问。</>
-                    ) : (
-                      <>视频URL无效或已过期。</>
-                    )}
+                    视频临时URL已过期。点击下方按钮尝试恢复视频。
                   </p>
-                  <div className="pt-4 space-y-2">
-                    <p className="text-sm text-gray-400">建议操作：</p>
-                    <ul className="text-left text-sm text-gray-300 space-y-1">
-                      <li>• 重新生成一个新视频</li>
-                      <li>• 或联系技术支持获取帮助</li>
-                    </ul>
+                  <div className="flex gap-3 justify-center">
+                    <button
+                      onClick={handleRefreshVideo}
+                      disabled={isLoadingVideo}
+                      className="px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-lg font-medium hover:from-blue-700 hover:to-cyan-700 transition-all disabled:opacity-50"
+                    >
+                      {isLoadingVideo ? '恢复中...' : '尝试恢复视频'}
+                    </button>
+                    <button
+                      onClick={() => { markClosing(); onClose(); }}
+                      className="px-6 py-3 bg-white/10 text-white rounded-lg font-medium hover:bg-white/20 transition-all"
+                    >
+                      关闭
+                    </button>
                   </div>
-                  <button
-                    onClick={onClose}
-                    className="mt-6 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg font-medium hover:from-purple-700 hover:to-pink-700 transition-all"
-                  >
-                    关闭
-                  </button>
                 </div>
               </div>
             </motion.div>
@@ -576,6 +291,7 @@ export function ImmersiveVideoViewer({ work, allWorks, userPhone, onClose, onWor
             duration={duration}
             isFullscreen={isFullscreen}
             fullscreenSupported={fullscreenSupported}
+            aspectRatio={aspectRatio}
             onPlayPause={() => setIsPlaying(!isPlaying)}
             onMuteToggle={() => setIsMuted(!isMuted)}
             onTimeUpdate={setCurrentTime}
@@ -616,6 +332,28 @@ export function ImmersiveVideoViewer({ work, allWorks, userPhone, onClose, onWor
             onShare={handleShare}
             onDownload={handleDownload}
           />
+        </div>
+
+        {/* v6.0.19: 移动端底部互动栏 */}
+        <div className="lg:hidden absolute bottom-0 left-0 right-0 z-40" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+          <div className="flex items-center justify-around px-4 py-2.5 bg-black/70 backdrop-blur-xl border-t border-white/10">
+            <button onClick={handleLike} className="flex flex-col items-center gap-0.5 active:scale-95 transition-transform">
+              <Heart className={`w-5 h-5 ${isLiked ? 'fill-pink-500 text-pink-500' : 'text-white'}`} />
+              <span className="text-[10px] text-white/70">{likes || '赞'}</span>
+            </button>
+            <button onClick={() => setShowComments(!showComments)} className="flex flex-col items-center gap-0.5 active:scale-95 transition-transform">
+              <MessageCircle className="w-5 h-5 text-white" />
+              <span className="text-[10px] text-white/70">{comments.length || '评论'}</span>
+            </button>
+            <button onClick={handleShare} className="flex flex-col items-center gap-0.5 active:scale-95 transition-transform">
+              <Share2 className="w-5 h-5 text-white" />
+              <span className="text-[10px] text-white/70">分享</span>
+            </button>
+            <button onClick={handleDownload} className="flex flex-col items-center gap-0.5 active:scale-95 transition-transform">
+              <Download className="w-5 h-5 text-white" />
+              <span className="text-[10px] text-white/70">下载</span>
+            </button>
+          </div>
         </div>
       </div>
     </motion.div>

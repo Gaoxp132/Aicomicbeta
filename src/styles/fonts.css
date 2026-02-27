@@ -1,9 +1,3 @@
 /* 字体导入文件 */
-/* 在这里添加自定义字体导入 */
-
-/* 默认使用系统字体 */
-:root {
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    'Microsoft YaHei', '微软雅黑', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
-}
+/* 在这里添加自定义字体导入（仅 @import / @font-face） */
+/* 注意: 不要在此文件中放置 CSS 规则，否则会破坏 index.css 的 @import 顺序 */

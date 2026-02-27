@@ -1,45 +1,116 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Film, Plus, RefreshCw, BookOpen, Users, Grid3x3, Bug } from 'lucide-react';
+import { Film, Plus, RefreshCw, BookOpen, Users, Grid3x3 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from './ui/button';
+import { Button } from './ui';
 import { SeriesListView } from './series/SeriesListView';
 import { SeriesCreationWizard } from './series/SeriesCreationWizard';
 import { SeriesEditor } from './series/SeriesEditor';
-import { useSeries } from '../hooks/useSeries';
-import * as seriesService from '../services/seriesService';
+import { useSeries } from '../hooks/media';
+import * as seriesService from '../services';
 import type { Series } from '../types';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
 
 interface SeriesCreationPanelProps {
   userPhone?: string;
+  initialSeries?: Series | null;
+  onBack?: () => void;
+  onSeriesDeleted?: (seriesId: string) => void; // v6.0.6: 通知 App 层清理相关任务
 }
 
-export function SeriesCreationPanel({ userPhone }: SeriesCreationPanelProps) {
-  const [view, setView] = useState<'list' | 'create' | 'edit'>('list');
-  const [selectedSeries, setSelectedSeries] = useState<Series | null>(null);
+export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeriesDeleted }: SeriesCreationPanelProps) {
+  const [view, setView] = useState<'list' | 'create' | 'edit'>(initialSeries ? 'edit' : 'list');
+  const [selectedSeries, setSelectedSeries] = useState<Series | null>(initialSeries || null);
   const { series, isLoading, error, addSeries, updateSeriesLocal, removeSeriesLocal, loadSeries } = useSeries(userPhone);
 
-  console.log('[SeriesCreationPanel] 🎬 Rendered with:', {
-    userPhone,
-    seriesLength: series?.length,
-    isLoading,
-    error,
-    view,
-    seriesPreview: series?.slice(0, 2).map(s => ({ id: s.id, title: s.title })),
-  });
+  // 🆕 追踪"正在生成中"的漫剧ID，用于检测完成并自动生成视频
+  const generatingSeriesIds = useRef<Set<string>>(new Set());
+  // 防止重复触发视频生成
+  const videoGenTriggered = useRef<Set<string>>(new Set());
+
+  // v6.0: 响应外部 initialSeries 变化
+  useEffect(() => {
+    if (initialSeries) {
+      setSelectedSeries(initialSeries);
+      setView('edit');
+    }
+  }, [initialSeries]);
 
   // 🔍 更详细的调试日志
   useEffect(() => {
-    console.log('[SeriesCreationPanel] 🔍 Data Status:', {
-      userPhone,
-      isLoading,
-      hasError: !!error,
-      errorMessage: error,
-      seriesCount: series?.length || 0,
-      seriesIds: series?.map(s => s.id) || [],
+    if (error) {
+      console.error('[SeriesCreationPanel] Error:', error);
+    }
+  }, [error]);
+
+  // 🆕 核心修复：检测AI漫剧从 generating → completed，自动触发视频生成
+  useEffect(() => {
+    if (!Array.isArray(series) || !userPhone) return;
+
+    // 1. 收集当前正在生成中的漫剧ID
+    const currentGenerating = new Set<string>();
+    series.forEach(s => {
+      if (s.status === 'generating' || s.status === 'in-progress') {
+        currentGenerating.add(s.id);
+      }
     });
-  }, [userPhone, isLoading, error, series]);
+
+    // 2. 找出 "之前在生成中、现在已完成" 的漫剧
+    const justCompleted = series.filter(s =>
+      s.status === 'completed' &&
+      generatingSeriesIds.current.has(s.id) &&
+      !videoGenTriggered.current.has(s.id)
+    );
+
+    // 3. 对刚完成的漫剧自动触发视频生成
+    for (const completedSeries of justCompleted) {
+      videoGenTriggered.current.add(completedSeries.id);
+      
+      toast.success(`"${completedSeries.title}" AI剧本创作完成！正在自动生成视频...`, {
+        duration: 5000,
+      });
+
+      // 获取完整详情（包含 episodes + storyboards）再触发视频生成
+      (async () => {
+        try {
+          const detailResult = await seriesService.getSeries(completedSeries.id);
+          if (!detailResult.success || !detailResult.data) {
+            console.error('[SeriesCreation] Failed to fetch completed series detail');
+            return;
+          }
+          const fullSeries = detailResult.data;
+          const hasStoryboards = fullSeries.episodes?.some(
+            (ep: any) => ep.storyboards && ep.storyboards.length > 0
+          );
+
+          if (hasStoryboards) {
+            const { generateAllVideosForSeries } = await import('../services');
+            const result = await generateAllVideosForSeries(
+              fullSeries,
+              userPhone,
+              (progress) => {
+                // 更新本地状态的生成进度
+                if (progress.status === 'completed') {
+                  toast.success(`"${fullSeries.title}" 全部视频生成完成！`);
+                  loadSeries(); // 刷新列表
+                }
+              }
+            );
+            if (!result.success) {
+              console.error('[SeriesCreation] Auto video generation failed:', result.error);
+              toast.error(`视频生成启动失败: ${result.error}`);
+            }
+          } else {
+            console.warn('[SeriesCreation] Completed series has no storyboards, skipping video gen');
+          }
+        } catch (err: any) {
+          console.error('[SeriesCreation] Auto video gen error:', err);
+        }
+      })();
+    }
+
+    // 4. 更新追踪集合
+    generatingSeriesIds.current = currentGenerating;
+  }, [series, userPhone]);
 
   const handleCreateNew = () => {
     setView('create');
@@ -53,11 +124,10 @@ export function SeriesCreationPanel({ userPhone }: SeriesCreationPanelProps) {
     if (newSeries.status === 'generating') {
       setView('list');
       setSelectedSeries(null);
-      // 不需要手动触发轮询，useSeries hook会自动检测generating状态并开始轮询
-      console.log('[SeriesCreation] ✨ AI generation in progress, staying on list view for progress monitoring');
+      // 标记这个漫剧正在生成中，以便完成后自动触发视频生成
+      generatingSeriesIds.current.add(newSeries.id);
       
-      // 🎯 显示友好提示
-      toast.success('✨ AI创作已开始！预计需要30-60秒完成，请在列表中等待。');
+      toast.success('✨ AI创作已开始！剧本完成后将自动生成视频，请稍候。');
       return;
     }
     
@@ -65,10 +135,9 @@ export function SeriesCreationPanel({ userPhone }: SeriesCreationPanelProps) {
     if (newSeries.status === 'draft' || !newSeries.episodes || newSeries.episodes.length === 0) {
       setView('list');
       setSelectedSeries(null);
-      console.log('[SeriesCreation] 📝 Series created in draft state, staying on list view');
+      generatingSeriesIds.current.add(newSeries.id);
       
-      // 显示提示，引导用户等待AI生成
-      toast.success('✨ AI创作已开始！预计需要30-60秒完成，页面会自动刷新。');
+      toast.success('✨ AI创作已开始！剧本完成后将自动生成视频，页面会自动刷新。');
       return;
     }
     
@@ -76,72 +145,47 @@ export function SeriesCreationPanel({ userPhone }: SeriesCreationPanelProps) {
     setSelectedSeries(newSeries);
     setView('edit');
     
-    // 🎬 自动触发视频生成（如果用户已登录）
+    // v6.0: 已完成的漫剧也通过 useEffect 统一路径触发视频生成
+    // 标记为 "已完成但需要视频生成" — 同样由 useEffect + batchVideoService 全局去重保护
     if (userPhone && newSeries.episodes && newSeries.episodes.length > 0) {
-      // 询问用户是否自动生成视频
-      const shouldAutoGenerate = confirm(
-        '漫剧创作完成！\n\n是否立即为所有分镜生成视频？\n（可以稍后在编辑页面手动生成）'
+      const hasStoryboards = newSeries.episodes.some(
+        ep => ep.storyboards && ep.storyboards.length > 0
       );
       
-      if (shouldAutoGenerate) {
-        // 延迟一下，让UI有时间更新
+      if (hasStoryboards && !videoGenTriggered.current.has(newSeries.id)) {
+        videoGenTriggered.current.add(newSeries.id);
+        toast.success('漫剧创作完成！正在自动生成视频...', { duration: 4000 });
+        
         setTimeout(async () => {
-          console.log('[SeriesCreation] 🎬 Auto-generating videos for new series');
-          
-          const batchVideoService = await import('../services/batchVideoGeneration');
-          batchVideoService.generateAllVideosForSeries(
-            newSeries,
-            userPhone,
-            (progress) => {
-              console.log(`[SeriesCreation] Video generation progress: ${progress.progress}%`);
-            }
-          ).then(result => {
-            if (result.success) {
-              toast.success('所有视频已开始生成！您可以在"我的作品"中查看生成进度。');
-            } else {
+          try {
+            const { generateAllVideosForSeries: genAll } = await import('../services');
+            const result = await genAll(
+              newSeries,
+              userPhone,
+              (progress) => {
+                if (progress.status === 'completed') {
+                  toast.success('🎬 全部视频生成完成！');
+                }
+              }
+            );
+            if (!result.success) {
               console.error('[SeriesCreation] Auto-generation failed:', result.error);
+              toast.error(`视频生成失败: ${result.error}`);
             }
-          });
+          } catch (err: any) {
+            console.error('[SeriesCreation] Auto-generation error:', err);
+          }
         }, 1000);
       }
     }
   };
 
   const handleEditSeries = async (series: Series) => {
-    console.log('[SeriesCreationPanel] 📖 Loading full series details before edit...');
-    console.log('[SeriesCreationPanel] Series ID:', series.id);
-    console.log('[SeriesCreationPanel] Current episodes count:', series.episodes?.length || 0);
-    
     try {
-      // 🔄 主动加载完整的series详情（包括所有关联数据）
-      console.log('[SeriesCreationPanel] 🌐 Calling seriesService.getSeries...');
-      const result = await seriesService.getSeries(series.id, userPhone);
-      
-      console.log('[SeriesCreationPanel] 🔍 API Response:', {
-        success: result.success,
-        hasData: !!result.data,
-        error: result.error,
-      });
+      const result = await seriesService.getSeries(series.id);
       
       if (result.success && result.data) {
         const fullSeries = result.data;
-        console.log('[SeriesCreationPanel] ✅ Full series data loaded:');
-        console.log('  - Title:', fullSeries.title);
-        console.log('  - Status:', fullSeries.status);
-        console.log('  - Characters:', fullSeries.characters?.length || 0);
-        console.log('  - Episodes:', fullSeries.episodes?.length || 0);
-        console.log('  - Raw episodes data:', fullSeries.episodes);
-        
-        if (fullSeries.episodes && fullSeries.episodes.length > 0) {
-          const totalStoryboards = fullSeries.episodes.reduce((sum, ep) => 
-            sum + (ep.storyboards?.length || 0), 0
-          );
-          console.log('  - Total storyboards:', totalStoryboards);
-          console.log('  - First episode:', fullSeries.episodes[0]);
-        } else {
-          console.warn('[SeriesCreationPanel] ⚠️ Episodes array is empty or undefined!');
-        }
-        
         setSelectedSeries(fullSeries);
         setView('edit');
       } else {
@@ -155,6 +199,10 @@ export function SeriesCreationPanel({ userPhone }: SeriesCreationPanelProps) {
   };
 
   const handleBackToList = () => {
+    if (onBack) {
+      onBack();
+      return;
+    }
     setView('list');
     setSelectedSeries(null);
     loadSeries(); // 重新加载列表以获取最新数据
@@ -169,6 +217,8 @@ export function SeriesCreationPanel({ userPhone }: SeriesCreationPanelProps) {
     removeSeriesLocal(seriesId);
     setView('list');
     setSelectedSeries(null);
+    // v6.0.6: 通知上层（App → useVideoGeneration）清理该系列的视频任务
+    onSeriesDeleted?.(seriesId);
   };
 
   return (
@@ -184,14 +234,14 @@ export function SeriesCreationPanel({ userPhone }: SeriesCreationPanelProps) {
           >
             {/* 头部 */}
             <div className="mb-8">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-3 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-2xl border border-purple-500/30">
-                    <Film className="w-6 h-6 text-purple-400" />
+                  <div className="p-2.5 sm:p-3 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-2xl border border-purple-500/30">
+                    <Film className="w-5 h-5 sm:w-6 sm:h-6 text-purple-400" />
                   </div>
                   <div>
-                    <h1 className="text-2xl sm:text-3xl font-bold text-white">漫剧创作</h1>
-                    <p className="text-sm text-gray-400 mt-1">创作属于你的连续剧集</p>
+                    <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white">漫剧创作</h1>
+                    <p className="text-xs sm:text-sm text-gray-400 mt-1">创作属于你的连续剧集</p>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -247,6 +297,7 @@ export function SeriesCreationPanel({ userPhone }: SeriesCreationPanelProps) {
               userPhone={userPhone}
               onDelete={handleSeriesDeleted}
               onRefresh={loadSeries}
+              onSeriesDeleted={onSeriesDeleted}
             />
           </motion.div>
         )}

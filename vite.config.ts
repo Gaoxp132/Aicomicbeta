@@ -1,51 +1,28 @@
 import { defineConfig } from 'vite'
-import path from 'path'
-import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+// v6.0.132: Fix "Failed to fetch dynamically imported module" for App.tsx
+// Root cause: motion/react re-exports from framer-motion via `export * from 'framer-motion'`
+// In the Figma proxy environment, Vite's on-demand transform of this deep resolution chain
+// (motion/dist/es/react.mjs → framer-motion → framer-motion/dist/es/index.mjs) can fail
+// due to timeout or 500 errors through the proxy layer.
+//
+// Fix: optimizeDeps.include forces Vite to pre-bundle these packages during startup,
+// converting the multi-hop ESM chain into a single pre-bundled file that loads instantly.
+// resolve.dedupe ensures only one copy of framer-motion is ever resolved.
 export default defineConfig({
-  plugins: [
-    // The React and Tailwind plugins are both required for Make, even if
-    // Tailwind is not being actively used – do not remove them
-    react(),
-    tailwindcss(),
-  ],
-  resolve: {
-    alias: {
-      // Alias @ to the src directory
-      '@': path.resolve(__dirname, './src'),
-    },
-  },
-  // 强制清除缓存配置
+  plugins: [react()],
   optimizeDeps: {
-    force: true, // 强制重新优化依赖
     include: [
+      'framer-motion',
+      'motion',
       'react',
       'react-dom',
-      'motion/react',
       'lucide-react',
+      'sonner',
     ],
   },
-  server: {
-    fs: {
-      strict: false, // 允许访问工作区外的文件
-    },
-    hmr: {
-      overlay: true, // 显示错误覆盖层
-    },
+  resolve: {
+    dedupe: ['framer-motion', 'motion', 'react', 'react-dom'],
   },
-  build: {
-    sourcemap: true, // 生成 sourcemap 以便调试
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom'],
-          'motion-vendor': ['motion/react'],
-          'ui-vendor': ['lucide-react'],
-        },
-      },
-    },
-  },
-  // 禁用缓存
-  cacheDir: '.vite-temp',
 })

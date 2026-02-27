@@ -1,176 +1,322 @@
-import React, { useState, useEffect } from 'react';
-import { AnimatePresence } from 'motion/react';
+/**
+ * AI漫剧 - 主应用组件
+ * v6.0.132 - vite.config.ts optimizeDeps fix for motion/framer-motion resolution
+ */
+
+import React, { useState, useCallback, lazy, Suspense, useEffect } from 'react';
+import { Toaster } from 'sonner';
+
+// Core components (loaded eagerly for first paint)
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Header } from './components/Header';
-import { GeneratePanel } from './components/GeneratePanel';
-import { SeriesCreationPanel } from './components/SeriesCreationPanel';
-import { CommunityPanel } from './components/CommunityPanel';
-import { ProfilePanel } from './components/ProfilePanel';
-import { ImmersiveVideoViewer } from './components/ImmersiveVideoViewer';
-import { TaskStatusButton } from './components/TaskStatusButton';
-import { TaskStatusFloating } from './components/TaskStatusFloating';
 import { MobileBottomBar } from './components/MobileBottomBar';
-import { LoginDialog } from './components/LoginDialog';
-import { SettingsDialog } from './components/SettingsDialog';
-import { EdgeFunctionError } from './components/EdgeFunctionError';
-import { ServerLoadingIndicator } from './components/ServerLoadingIndicator';
-import { Toaster } from './components/ui/sonner';
-import { useAuth } from './hooks/useAuth';
-import { useVideoGeneration } from './hooks/useVideoGeneration';
-import { useEdgeFunctionStatus } from './hooks/useEdgeFunctionStatus';
-import { initializeAllOptimizations, trackPageView } from './utils';
-import { APP_VERSION } from './version';
-import './utils/oauth-tools'; // 🔧 加载 OAuth 调试工具
-import type { Comic } from './types/index';
+import { EdgeFunctionError, ServerLoadingIndicator } from './components/ServerStatus';
 
-export type { Comic };
+// v6.0.127: SeriesCreationPanel loaded eagerly — dynamic import() fails through Figma proxy
+// because Vite's on-demand transform of the deep motion/react→framer-motion chain
+// through pnpm virtual store times out or returns 500 under the proxy.
+import { SeriesCreationPanel } from './components/SeriesCreationPanel';
 
+// Hooks
+import { useAuth, useEdgeFunctionStatus } from './hooks';
+import { useAdminPaymentPoller } from './hooks/useAdminPaymentPoller';
+
+// Event bus
+import { onQuotaExceeded, type QuotaExceededInfo } from './utils/events';
+
+// Types
+import type { Series, Comic } from './types';
+
+// ── Lazy-loaded tab panels (code-split) ─────────────────────────────
+const HomeCreationPanel = lazy(() =>
+  import('./components/HomeCreationPanel').then(m => ({ default: m.HomeCreationPanel }))
+);
+const CommunityPanel = lazy(() =>
+  import('./components/CommunityPanel').then(m => ({ default: m.CommunityPanel }))
+);
+const ProfilePanel = lazy(() =>
+  import('./components/ProfilePanel').then(m => ({ default: m.ProfilePanel }))
+);
+const LoginDialog = lazy(() =>
+  import('./components/LoginDialog').then(m => ({ default: m.LoginDialog }))
+);
+const SettingsDialog = lazy(() =>
+  import('./components/SettingsDialog').then(m => ({ default: m.SettingsDialog }))
+);
+const ImmersiveVideoViewer = lazy(() =>
+  import('./components/ImmersiveVideoViewer').then(m => ({ default: m.ImmersiveVideoViewer }))
+);
+const PaymentDialog = lazy(() =>
+  import('./components/PaymentDialog').then(m => ({ default: m.PaymentDialog }))
+);
+const AdminPanel = lazy(() =>
+  import('./components/AdminPanel').then(m => ({ default: m.AdminPanel }))
+);
+
+// ── Types ────────────────────────────────────────────────────────────
+type TabId = 'create' | 'works' | 'community' | 'profile';
+
+// ── Loading fallback ─────────────────────────────────────────────────
+function TabLoader() {
+  return (
+    <div className="flex items-center justify-center py-32">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+        <span className="text-sm text-gray-500">加载中...</span>
+      </div>
+    </div>
+  );
+}
+
+const ADMIN_PHONE = '18565821136';
+
+// ── Main App ─────────────────────────────────────────────────────────
 export default function App() {
-  // 输出版本信息用于调试
-  console.log(`[App] 🚀 Version: ${APP_VERSION}`);
-  console.log('[App] ✅ Application initialized successfully');
+  // ── Auth ──
+  const {
+    userPhone,
+    showLoginDialog,
+    setShowLoginDialog,
+    handleLoginSuccess,
+    handleLogout,
+  } = useAuth();
 
-  // 启动时检查并初始化所有优化
+  // ── Server status ──
+  const {
+    isConnected,
+    isChecking,
+    showError,
+    dismissError,
+    retry,
+    deployStatus,
+    fetchDeployVerify,
+    isFallbackMode,
+    fallbackError,
+  } = useEdgeFunctionStatus();
+
+  // ── Navigation ──
+  const [activeTab, setActiveTab] = useState<TabId>('create');
+
+  // ── Series editing (Home → Works navigation) ──
+  const [editSeries, setEditSeries] = useState<Series | null>(null);
+
+  // ── Immersive video viewer ──
+  const [selectedComic, setSelectedComic] = useState<Comic | null>(null);
+  const [selectedComicsList, setSelectedComicsList] = useState<Comic[]>([]);
+
+  // ── Settings ──
+  const [showSettings, setShowSettings] = useState(false);
+
+  // ── v6.0.96: Payment Dialog ──
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  const [quotaInfo, setQuotaInfo] = useState<QuotaExceededInfo | undefined>(undefined);
+
+  // ── v6.0.96: Admin Panel ──
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [adminPanelDefaultTab, setAdminPanelDefaultTab] = useState<'users' | 'payments' | 'settings'>('users');
+  const isAdmin = userPhone === ADMIN_PHONE;
+
+  // ── v6.0.102: Admin payment poller (only active when admin is logged in) ──
+  const { pendingCount: pendingPaymentCount, notifPermission, requestPermission } = useAdminPaymentPoller(
+    isAdmin ? userPhone : null,
+    // onNewPayments: open AdminPanel to payments tab
+    (count) => {
+      setAdminPanelDefaultTab('payments');
+      setShowAdminPanel(true);
+    }
+  );
+
+  // ── Listen to global quota-exceeded events ──
   useEffect(() => {
-    console.log('[App] ✅ All modules loaded successfully');
-    console.log('[App] 📱 Starting AI漫剧创作应用...');
-    
-    // 初始化所有优化
-    initializeAllOptimizations();
-    
-    // 追踪页面访问
-    trackPageView(window.location.pathname, document.title);
+    return onQuotaExceeded((info) => {
+      setQuotaInfo(info);
+      setShowPaymentDialog(true);
+    });
   }, []);
 
-  const [selectedComic, setSelectedComic] = useState<Comic | null>(null);
-  const [allComics, setAllComics] = useState<Comic[]>([]);
-  const [activeTab, setActiveTab] = useState<'create' | 'series' | 'community' | 'profile'>('community');
-  const [showTaskStatus, setShowTaskStatus] = useState(false);
-  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
-
-  const { userPhone, showLoginDialog, setShowLoginDialog, handleLoginSuccess, handleLogout } = useAuth();
-  const { comics, activeTasks, handleGenerate } = useVideoGeneration(userPhone);
-  const { isConnected, isChecking, showError, dismissError } = useEdgeFunctionStatus();
-
-  const handleLoginClick = () => {
-    if (userPhone) {
-      setShowSettingsDialog(true);
-    } else {
+  // ── Handlers ──
+  const handleTabChange = useCallback((tab: TabId) => {
+    if (tab === 'profile' && !userPhone) {
       setShowLoginDialog(true);
+      return;
     }
-  };
+    setActiveTab(tab);
+  }, [userPhone, setShowLoginDialog]);
 
-  const handleSelectComic = (comic: Comic, comicsList?: Comic[]) => {
-    console.log('[App] handleSelectComic called');
-    console.log('[App] Selected comic:', comic.id, comic.title);
-    console.log('[App] Comics list:', comicsList?.length || 0, 'items');
-    
+  const handleSeriesCreated = useCallback((series: Series) => {
+    setEditSeries(series);
+    setActiveTab('works');
+  }, []);
+
+  const handleEditSeries = useCallback((series: Series) => {
+    setEditSeries(series);
+    setActiveTab('works');
+  }, []);
+
+  const handleSelectComic = useCallback((comic: Comic, comicsList?: Comic[]) => {
     setSelectedComic(comic);
-    if (comicsList && comicsList.length > 0) {
-      console.log('[App] Setting allComics to:', comicsList.length, 'items');
-      console.log('[App] Comics IDs:', comicsList.map(c => c.id));
-      setAllComics(comicsList);
-    } else {
-      console.warn('[App] ⚠️ No comics list provided or empty list');
+    setSelectedComicsList(comicsList || []);
+  }, []);
+
+  const handleCloseViewer = useCallback(() => {
+    setSelectedComic(null);
+    setSelectedComicsList([]);
+  }, []);
+
+  const handleSeriesDeleted = useCallback((_seriesId: string) => {
+    // Clean up if the deleted series was being edited
+    if (editSeries?.id === _seriesId) {
+      setEditSeries(null);
     }
-  };
+  }, [editSeries]);
+
+  // Clear editSeries when navigating away from works
+  const handleTabChangeWithCleanup = useCallback((tab: TabId) => {
+    if (tab !== 'works') {
+      setEditSeries(null);
+    }
+    handleTabChange(tab);
+  }, [handleTabChange]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950">
-      {/* 背景装饰 */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 -left-48 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 -right-48 w-96 h-96 bg-blue-500/20 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-pink-500/10 rounded-full blur-3xl" />
-      </div>
-
-      <div className="relative z-10">
-        <Header 
-          activeTab={activeTab} 
-          onTabChange={setActiveTab}
-          userPhone={userPhone}
-          onLoginClick={handleLoginClick}
-          onSettingsClick={() => setShowSettingsDialog(true)}
-        />
-        
-        <div className="h-16 sm:h-20" />
-        
-        <main className="container mx-auto px-4 py-6 lg:py-8 pb-24 lg:pb-8">
-          {activeTab === 'create' && <GeneratePanel onGenerate={handleGenerate} activeTasks={activeTasks} />}
-          {activeTab === 'series' && <SeriesCreationPanel userPhone={userPhone} />}
-          {activeTab === 'community' && <CommunityPanel onSelectComic={handleSelectComic} userPhone={userPhone} />}
-          {activeTab === 'profile' && userPhone && <ProfilePanel userPhone={userPhone} onSelectComic={handleSelectComic} onLogout={handleLogout} />}
-        </main>
-      </div>
-
-      {/* 全屏沉浸式视频查看器 */}
-      <AnimatePresence>
-        {selectedComic && (
-          <ImmersiveVideoViewer
-            work={selectedComic}
-            allWorks={allComics}
-            userPhone={userPhone}
-            onClose={() => setSelectedComic(null)}
-            onWorkChange={setSelectedComic}
-          />
-        )}
-      </AnimatePresence>
-      
-      {/* 任务状态按钮 - 仅在创作页面显示 */}
-      {activeTab === 'create' && (
-        <TaskStatusButton
-          activeTasks={activeTasks.length}
-          onClick={() => setShowTaskStatus(true)}
-        />
-      )}
-      
-      {/* 任务状态浮窗 */}
-      {showTaskStatus && (
-        <TaskStatusFloating
-          tasks={activeTasks}
-          onTaskClick={(task) => {
-            setSelectedComic(task);
-            setShowTaskStatus(false);
+    <ErrorBoundary>
+      <div className="dark min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950 text-white">
+        {/* Toast notifications — bottom-right to avoid blocking header nav on desktop */}
+        <Toaster
+          theme="dark"
+          position="bottom-right"
+          toastOptions={{
+            style: { background: '#1e1e2e', border: '1px solid #313244', color: '#cdd6f4' },
           }}
-          onClose={() => setShowTaskStatus(false)}
         />
-      )}
-      
-      <MobileBottomBar 
-        activeTab={activeTab} 
-        onTabChange={setActiveTab}
-        userPhone={userPhone}
-        onLoginClick={handleLoginClick}
-      />
-      
-      {/* 登录对话框 */}
-      <LoginDialog
-        isOpen={showLoginDialog}
-        onClose={() => setShowLoginDialog(false)}
-        onLoginSuccess={handleLoginSuccess}
-      />
-      
-      {/* 设置对话框 */}
-      <SettingsDialog
-        isOpen={showSettingsDialog}
-        onClose={() => setShowSettingsDialog(false)}
-        userPhone={userPhone}
-        onLogout={handleLogout}
-      />
-      
-      {/* 边缘函数错误提示 */}
-      <EdgeFunctionError
-        showError={showError}
-        dismissError={dismissError}
-      />
-      
-      {/* 服务器加载指示器 */}
-      <ServerLoadingIndicator
-        isConnected={isConnected}
-        isChecking={isChecking}
-      />
-      
-      {/* Toast通知 */}
-      <Toaster />
-    </div>
+
+        {/* Server status indicators */}
+        <ServerLoadingIndicator isChecking={isChecking} isConnected={isConnected} />
+        <EdgeFunctionError
+          showError={showError}
+          dismissError={dismissError}
+          onRetry={retry}
+          deployStatus={deployStatus}
+          onFetchDeployVerify={fetchDeployVerify}
+          isFallbackMode={isFallbackMode}
+          fallbackError={fallbackError}
+        />
+
+        {/* Header - desktop navigation */}
+        <Header
+          activeTab={activeTab}
+          onTabChange={handleTabChangeWithCleanup}
+          userPhone={userPhone}
+          onLoginClick={() => setShowLoginDialog(true)}
+          onSettingsClick={() => setShowSettings(true)}
+          onAdminClick={isAdmin ? () => { setAdminPanelDefaultTab('users'); setShowAdminPanel(true); } : undefined}
+          pendingPaymentCount={isAdmin ? pendingPaymentCount : 0}
+        />
+
+        {/* Main content area */}
+        <main className="pt-16 pb-20 lg:pb-6 min-h-screen">
+          <Suspense fallback={<TabLoader />}>
+            {activeTab === 'create' && (
+              <HomeCreationPanel
+                userPhone={userPhone}
+                onSeriesCreated={handleSeriesCreated}
+                onShowLogin={() => setShowLoginDialog(true)}
+                onEditSeries={handleEditSeries}
+              />
+            )}
+
+            {activeTab === 'works' && (
+              <SeriesCreationPanel
+                userPhone={userPhone}
+                initialSeries={editSeries}
+                onBack={() => {
+                  setEditSeries(null);
+                  setActiveTab('create');
+                }}
+                onSeriesDeleted={handleSeriesDeleted}
+              />
+            )}
+
+            {activeTab === 'community' && (
+              <CommunityPanel
+                onSelectComic={handleSelectComic}
+                userPhone={userPhone}
+              />
+            )}
+
+            {activeTab === 'profile' && userPhone && (
+              <ProfilePanel
+                userPhone={userPhone}
+                onSelectComic={handleSelectComic}
+                onLogout={handleLogout}
+                onOpenPayment={() => setShowPaymentDialog(true)}
+                onOpenAdmin={isAdmin ? () => setShowAdminPanel(true) : undefined}
+              />
+            )}
+          </Suspense>
+        </main>
+
+        {/* Mobile bottom navigation */}
+        <MobileBottomBar
+          activeTab={activeTab}
+          onTabChange={handleTabChangeWithCleanup}
+          userPhone={userPhone}
+          onLoginClick={() => setShowLoginDialog(true)}
+        />
+
+        {/* Overlays & Dialogs */}
+        <Suspense fallback={null}>
+          {showLoginDialog && (
+            <LoginDialog
+              isOpen={showLoginDialog}
+              onClose={() => setShowLoginDialog(false)}
+              onLoginSuccess={handleLoginSuccess}
+            />
+          )}
+
+          {showSettings && (
+            <SettingsDialog
+              isOpen={showSettings}
+              onClose={() => setShowSettings(false)}
+              userPhone={userPhone}
+              onLogout={handleLogout}
+            />
+          )}
+
+          {selectedComic && (
+            <ImmersiveVideoViewer
+              work={selectedComic}
+              allWorks={selectedComicsList}
+              userPhone={userPhone}
+              onClose={handleCloseViewer}
+            />
+          )}
+
+          {/* v6.0.96: Payment Dialog — triggered when daily quota is exceeded */}
+          {showPaymentDialog && userPhone && (
+            <PaymentDialog
+              isOpen={showPaymentDialog}
+              onClose={() => setShowPaymentDialog(false)}
+              userPhone={userPhone}
+              quotaInfo={quotaInfo}
+              onPaymentRecorded={() => {
+                // After recording payment intent, user can close and admin will add credits
+              }}
+            />
+          )}
+
+          {/* v6.0.96: Admin Panel — only for admin account */}
+          {showAdminPanel && isAdmin && (
+            <AdminPanel
+              adminPhone={ADMIN_PHONE}
+              onClose={() => setShowAdminPanel(false)}
+              defaultTab={adminPanelDefaultTab}
+              onRequestNotifPermission={requestPermission}
+              notifPermission={notifPermission}
+            />
+          )}
+        </Suspense>
+      </div>
+    </ErrorBoundary>
   );
 }

@@ -2,13 +2,11 @@ import { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Plus, Edit2, Trash2, ChevronDown, ChevronRight, BookOpen, Film } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Textarea } from '../ui/textarea';
-import { Card } from '../ui/card';
-import { Badge } from '../ui/badge';
-import { SeriesFixTool } from './SeriesFixTool';
+import { Button, Input, Textarea, Badge, Card } from '../ui';
 import type { Series, Chapter, Episode } from '../../types';
+import { SeriesFixTool } from './HealthWidgets';
+
+// ── SeriesFixTool extracted to HealthWidgets.tsx (v6.0.88) ────────
 
 interface ChapterManagerProps {
   series: Series;

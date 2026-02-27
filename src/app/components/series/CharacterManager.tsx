@@ -1,13 +1,17 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
-import { Plus, Edit, Trash2, User, Sparkles } from 'lucide-react';
-import { Button } from '../ui/button';
-import { Label } from '../ui/label';
+import { Plus, Edit, Trash2, User, Sparkles, Loader2 } from 'lucide-react';
+import { Button, Label } from '../ui';
+import { toast } from 'sonner';
+import { apiPost, apiDelete, apiRequest } from '../../utils';
 import type { Character } from '../../types';
 
 interface CharacterManagerProps {
   characters: Character[];
+  seriesId: string;
+  userPhone?: string;
   onUpdate: (characters: Character[]) => void;
+  seriesStatus?: string; // 漫剧当前状态
 }
 
 const ROLE_TYPES = [
@@ -17,9 +21,10 @@ const ROLE_TYPES = [
   { id: 'extra', name: '群演', color: 'from-gray-500 to-gray-600' },
 ];
 
-export function CharacterManager({ characters, onUpdate }: CharacterManagerProps) {
+export function CharacterManager({ characters, seriesId, userPhone, onUpdate, seriesStatus }: CharacterManagerProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isAIGenerating, setIsAIGenerating] = useState(false);
   const [formData, setFormData] = useState<Partial<Character>>({
     name: '',
     description: '',
@@ -31,19 +36,34 @@ export function CharacterManager({ characters, onUpdate }: CharacterManagerProps
   // ✅ 确保characters数组始终存在
   const safeCharacters = characters || [];
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!formData.name) return;
 
-    const newCharacter: Character = {
-      id: `char-${Date.now()}`,
+    const result = await apiPost(`/series/${seriesId}/characters`, {
       name: formData.name,
+      role: formData.role || 'protagonist',
       description: formData.description || '',
       appearance: formData.appearance || '',
       personality: formData.personality || '',
-      role: (formData.role as Character['role']) || 'protagonist',
-    };
+    });
 
-    onUpdate([...safeCharacters, newCharacter]);
+    if (result.success && result.data) {
+      onUpdate([...safeCharacters, result.data]);
+      toast.success(`角色"${formData.name}"创建成功`);
+    } else {
+      // 回退到本地创建
+      const newCharacter: Character = {
+        id: `char-${Date.now()}`,
+        name: formData.name!,
+        description: formData.description || '',
+        appearance: formData.appearance || '',
+        personality: formData.personality || '',
+        role: (formData.role as Character['role']) || 'protagonist',
+      };
+      onUpdate([...safeCharacters, newCharacter]);
+      console.warn('[CharacterManager] API failed, used local fallback:', result.error);
+    }
+
     setFormData({
       name: '',
       description: '',
@@ -59,13 +79,34 @@ export function CharacterManager({ characters, onUpdate }: CharacterManagerProps
     setFormData(character);
   };
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     if (!editingId || !formData.name) return;
 
-    const updated = safeCharacters.map(char =>
-      char.id === editingId ? { ...char, ...formData } as Character : char
-    );
-    onUpdate(updated);
+    const result = await apiRequest(`/series/${seriesId}/characters/${editingId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: formData.name,
+        role: formData.role,
+        description: formData.description,
+        appearance: formData.appearance,
+        personality: formData.personality,
+      }),
+    });
+
+    if (result.success && result.data) {
+      const updated = safeCharacters.map(char =>
+        char.id === editingId ? result.data : char
+      );
+      onUpdate(updated);
+      toast.success(`角色"${formData.name}"已更新`);
+    } else {
+      // 回退到本地更新
+      const updated = safeCharacters.map(char =>
+        char.id === editingId ? { ...char, ...formData } as Character : char
+      );
+      onUpdate(updated);
+    }
+
     setEditingId(null);
     setFormData({
       name: '',
@@ -76,10 +117,17 @@ export function CharacterManager({ characters, onUpdate }: CharacterManagerProps
     });
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('确定要删除这个角色吗？')) {
-      onUpdate(safeCharacters.filter(char => char.id !== id));
+  const handleDelete = async (id: string) => {
+    if (!confirm('确定要删除这个角色吗？')) return;
+
+    const result = await apiDelete(`/series/${seriesId}/characters/${id}`);
+    if (!result.success) {
+      console.warn('[CharacterManager] Delete API error:', result.error);
     }
+
+    // 无论API是否成功，都从本地列表移除
+    onUpdate(safeCharacters.filter(char => char.id !== id));
+    toast.success('角色已删除');
   };
 
   const handleCancel = () => {
@@ -94,6 +142,25 @@ export function CharacterManager({ characters, onUpdate }: CharacterManagerProps
     });
   };
 
+  // ✅ v5.5.0: AI 一键生成角色
+  const handleAIGenerate = async () => {
+    if (isAIGenerating) return;
+    setIsAIGenerating(true);
+    toast.info('AI正在生成角色，请稍候...');
+
+    const result = await apiPost(`/series/${seriesId}/ai-generate-characters`);
+
+    if (result.success && result.data) {
+      onUpdate(result.data);
+      const count = Array.isArray(result.data) ? result.data.length : 0;
+      toast.success(`AI成功生成了 ${count} 个角色！`);
+    } else {
+      toast.error('AI生成失败：' + (result.error || '未知错误'));
+    }
+
+    setIsAIGenerating(false);
+  };
+
   return (
     <div className="space-y-6">
       {/* 头部 */}
@@ -103,13 +170,27 @@ export function CharacterManager({ characters, onUpdate }: CharacterManagerProps
           <p className="text-sm text-gray-400">管理剧集中的所有角色</p>
         </div>
         {!isAdding && !editingId && (
-          <Button
-            onClick={() => setIsAdding(true)}
-            className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            添加角色
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={handleAIGenerate}
+              disabled={isAIGenerating}
+              className="bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600"
+            >
+              {isAIGenerating ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4 mr-2" />
+              )}
+              {isAIGenerating ? 'AI生成中...' : 'AI生成角色'}
+            </Button>
+            <Button
+              onClick={() => setIsAdding(true)}
+              className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              手动添加
+            </Button>
+          </div>
         )}
       </div>
 
@@ -214,17 +295,44 @@ export function CharacterManager({ characters, onUpdate }: CharacterManagerProps
       {/* 角色列表 */}
       {safeCharacters.length === 0 ? (
         <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-12 border border-white/10 text-center">
-          <User className="w-16 h-16 text-gray-500 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-white mb-2">还没有角色</h3>
-          <p className="text-gray-400 mb-6">添加角色以开始创作您的漫剧</p>
-          {!isAdding && (
-            <Button
-              onClick={() => setIsAdding(true)}
-              className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              添加第一个角色
-            </Button>
+          {seriesStatus === 'generating' ? (
+            <>
+              <div className="w-16 h-16 bg-gradient-to-br from-blue-500/20 to-cyan-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+              </div>
+              <h3 className="text-lg font-semibold text-white mb-2">AI正在创建角色</h3>
+              <p className="text-gray-400">角色信息将在AI创作完成后自动显示，请稍候...</p>
+            </>
+          ) : (
+            <>
+              <User className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-white mb-2">还没有角色</h3>
+              <p className="text-gray-400 mb-6">点击"AI生成角色"快速创建，或手动添加</p>
+              {!isAdding && (
+                <div className="flex gap-3 justify-center">
+                  <Button
+                    onClick={handleAIGenerate}
+                    disabled={isAIGenerating}
+                    className="bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600"
+                  >
+                    {isAIGenerating ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4 mr-2" />
+                    )}
+                    {isAIGenerating ? 'AI生成中...' : 'AI生成角色'}
+                  </Button>
+                  <Button
+                    onClick={() => setIsAdding(true)}
+                    variant="outline"
+                    className="border-white/20 text-white hover:bg-white/10"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    手动添加
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </div>
       ) : (
