@@ -23,6 +23,7 @@ import * as seriesService from '../services';
 import type { Series, SeriesFormData, ProductionType } from '../types';
 import { RecentSeriesCard, FeatureCard, ReferenceImageInput, QUICK_TEMPLATES, STYLE_CHIPS, EPISODE_PRESETS, MAX_INPUT_LENGTH, PRODUCTION_TYPES } from './home';
 import { CreationProgressOverlay } from './home/CreationProgressOverlay';
+import { getErrorMessage } from '../utils';
 
 interface HomeCreationPanelProps {
   userPhone?: string;
@@ -128,10 +129,10 @@ export function HomeCreationPanel({
         setShowProgressOverlay(false);
         toast.error('创作失败: ' + (result.error || '未知错误'));
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[HomeCreation] Error:', error);
       setShowProgressOverlay(false);
-      toast.error('创作失败: ' + error.message);
+      toast.error('生成失败：' + getErrorMessage(error));
     } finally {
       setIsCreating(false);
       setCreationPhase('');

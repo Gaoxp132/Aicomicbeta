@@ -1,15 +1,25 @@
 /**
  * Storyboard widgets — merged to reduce module count
  * v6.0.68: Merged StoryboardCard.tsx + StoryboardForm.tsx
+ * v6.0.164: DraggableStoryboardWrapper — drag-and-drop reordering via thin wrapper
+ * v6.0.165: Selection mode — checkbox overlay for batch operations
+ * v6.0.166: 缩略图点击进入预览模式, 选择模式下禁用拖拽
+ * v6.0.170: 复制分镜按钮
+ * v6.0.171: AI润色描述+对白
  * Both consumed only by StoryboardEditor.tsx.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Play, Edit, Trash2, Loader2, Image as ImageIcon, X, Check, RefreshCw, RotateCcw } from 'lucide-react';
+import { Play, Edit, Trash2, Loader2, Image as ImageIcon, X, Check, RefreshCw, RotateCcw, GripVertical, Square, CheckSquare, Eye, Copy, Sparkles } from 'lucide-react';
 import { Button, Label } from '../ui';
+import { useDrag, useDrop } from 'react-dnd';
+import { toast } from 'sonner';
 import { VideoPlayer } from '../VideoPlayer';
+import { apiRequest } from '../../utils';
+import { sbVideoUrl, sbThumbnailUrl } from '../../utils';
 import type { Storyboard, Character } from '../../types';
+import { getErrorMessage } from '../../utils';
 
 const CAMERA_ANGLES = [
   { id: 'close-up', name: '特写', icon: '👁️' },
@@ -39,6 +49,17 @@ function getAspectClass(ratio?: string): string {
   }
 }
 
+// v6.0.163: 格式化生成耗时
+function formatElapsed(startTime?: number): string | null {
+  if (!startTime) return null;
+  const seconds = Math.floor((Date.now() - startTime) / 1000);
+  if (seconds < 10) return null; // 前10秒不显示
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m${secs < 10 ? '0' : ''}${secs}s`;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // [A] StoryboardCard (was StoryboardCard.tsx)
 // ═══════════════════════════════════════════════════════════════════
@@ -48,21 +69,49 @@ interface StoryboardCardProps {
   index: number;
   characters: Character[];
   aspectRatio?: string; // v6.0.80: 画面比例
+  generatingStartTime?: number; // v6.0.163: 生成开始时间（用于显示耗时）
+  isSelectionMode?: boolean; // v6.0.165: 是否处于选择模式
+  isSelected?: boolean; // v6.0.165: 是否被选中
+  onToggleSelect?: (id: string) => void; // v6.0.165: 切换选中状态
+  onPreview?: (index: number) => void; // v6.0.166: 点击缩略图进入预览
   onEdit: (storyboard: Storyboard) => void;
   onDelete: (id: string) => void;
   onGenerate: (storyboard: Storyboard) => void;
   onRegenerate?: (storyboard: Storyboard) => void; // v6.0.87: 重新生成视频
   onResetStuck?: (storyboard: Storyboard) => void; // v6.0.112: 手动重置卡住的generating分镜
+  onCopy?: (storyboard: Storyboard) => void; // v6.0.170: 复制分镜
+  onPolish?: (storyboard: Storyboard) => void; // v6.0.171: AI润色
+  isPolishingId?: string | null; // v6.0.171: 正在润色的分镜ID
 }
 
-export function StoryboardCard({ storyboard, index, characters, aspectRatio, onEdit, onDelete, onGenerate, onRegenerate, onResetStuck }: StoryboardCardProps) {
+export function StoryboardCard({ storyboard, index, characters, aspectRatio, generatingStartTime, isSelectionMode, isSelected, onToggleSelect, onPreview, onEdit, onDelete, onGenerate, onRegenerate, onResetStuck, onCopy, onPolish, isPolishingId }: StoryboardCardProps) {
   const [isVideoExpanded, setIsVideoExpanded] = useState(false);
-  const videoUrl = storyboard.videoUrl || (storyboard as any).video_url;
-  const thumbnailUrl = storyboard.thumbnailUrl || (storyboard as any).thumbnail_url;
+  // v6.0.163: 动态更新生成耗时显示
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (storyboard.status !== 'generating') return;
+    const timer = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [storyboard.status]);
+  const elapsed = storyboard.status === 'generating' ? formatElapsed(generatingStartTime) : null;
+  const videoUrl = sbVideoUrl(storyboard);
+  const thumbnailUrl = sbThumbnailUrl(storyboard);
   const hasVideo = !!videoUrl;
 
   return (
-    <motion.div key={storyboard.id} whileHover={{ y: -4 }} className="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden group">
+    <motion.div key={storyboard.id} whileHover={{ y: -4 }} className={`relative bg-white/5 backdrop-blur-xl rounded-2xl border overflow-hidden group ${isSelectionMode && isSelected ? 'border-blue-500/50 ring-1 ring-blue-500/30' : 'border-white/10'}`}>
+      {/* v6.0.165: 选择模式下的复选框 — 左上角覆盖场景编号 */}
+      {isSelectionMode && (
+        <div
+          className="absolute top-3 left-3 z-30 cursor-pointer"
+          onClick={(e) => { e.stopPropagation(); onToggleSelect?.(storyboard.id); }}
+        >
+          {isSelected
+            ? <CheckSquare className="w-5 h-5 text-blue-400 drop-shadow-lg" />
+            : <Square className="w-5 h-5 text-white/60 drop-shadow-lg" />
+          }
+        </div>
+      )}
       <div className={`relative ${getAspectClass(aspectRatio)} bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center`}>
         {hasVideo && isVideoExpanded ? (
           <div className="w-full h-full relative">
@@ -100,6 +149,7 @@ export function StoryboardCard({ storyboard, index, characters, aspectRatio, onE
           {storyboard.status === 'generating' && (
             <div className="px-3 py-1 bg-blue-500/20 backdrop-blur-xl border border-blue-500/30 rounded-lg flex items-center gap-2">
               <Loader2 className="w-3 h-3 text-blue-400 animate-spin" /><span className="text-blue-400 text-xs font-medium">生成中</span>
+              {elapsed && <span className="text-blue-400 text-xs font-medium">({elapsed})</span>}
             </div>
           )}
           {hasVideo && storyboard.status !== 'generating' && !isVideoExpanded && (
@@ -132,6 +182,12 @@ export function StoryboardCard({ storyboard, index, characters, aspectRatio, onE
         )}
         <div className="flex gap-2">
           <Button onClick={() => onEdit(storyboard)} size="sm" variant="ghost" className="flex-1"><Edit className="w-3 h-3 mr-1" />编辑</Button>
+          {/* v6.0.166: 预览按钮——直接打开预览模式定位到当前分镜 */}
+          {onPreview && !isSelectionMode && (
+            <Button onClick={() => onPreview(index)} size="sm" variant="ghost" className="text-purple-400 hover:text-purple-300" title="预览此分镜">
+              <Eye className="w-3 h-3" />
+            </Button>
+          )}
           {/* v6.0.87: 已完成的分镜显示重新生成按钮（用于分辨率不一致修复） */}
           {hasVideo && storyboard.status !== 'generating' && onRegenerate && (
             <Button onClick={() => onRegenerate(storyboard)} size="sm" variant="ghost" className="text-blue-400 hover:text-blue-300" title="重新生成视频（修复分辨率等问题）">
@@ -144,10 +200,92 @@ export function StoryboardCard({ storyboard, index, characters, aspectRatio, onE
               <RotateCcw className="w-3 h-3" />
             </Button>
           )}
+          {/* v6.0.170: 复制分镜按钮 */}
+          {onCopy && (
+            <Button onClick={() => onCopy(storyboard)} size="sm" variant="ghost" className="text-green-400 hover:text-green-300" title="复制此分镜">
+              <Copy className="w-3 h-3" />
+            </Button>
+          )}
+          {/* v6.0.171: AI润色按钮 */}
+          {onPolish && storyboard.status !== 'generating' && (
+            <Button
+              onClick={() => onPolish(storyboard)}
+              disabled={isPolishingId === storyboard.id}
+              size="sm" variant="ghost"
+              className={isPolishingId === storyboard.id ? 'text-blue-400' : 'text-violet-400 hover:text-violet-300'}
+              title="AI润色描述+对白"
+            >
+              {isPolishingId === storyboard.id
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <Sparkles className="w-3 h-3" />}
+            </Button>
+          )}
           <Button onClick={() => onDelete(storyboard.id)} size="sm" variant="ghost" className="text-red-400 hover:text-red-300"><Trash2 className="w-3 h-3" /></Button>
         </div>
       </div>
     </motion.div>
+  );
+}
+
+// v6.0.164: DraggableStoryboardWrapper — drag-and-drop reordering via thin wrapper
+const STORYBOARD_DND_TYPE = 'STORYBOARD_CARD';
+
+interface DraggableStoryboardCardProps extends StoryboardCardProps {
+  onMoveCard: (dragIndex: number, hoverIndex: number) => void;
+}
+
+export function DraggableStoryboardCard({ onMoveCard, ...cardProps }: DraggableStoryboardCardProps) {
+  const { index, storyboard } = cardProps;
+  const ref = useRef<HTMLDivElement>(null);
+  const isSelectionMode = !!cardProps.isSelectionMode; // v6.0.166: 选择模式下禁用拖拽
+
+  const [{ isDragging }, drag, dragPreview] = useDrag({
+    type: STORYBOARD_DND_TYPE,
+    item: () => ({ id: storyboard.id, index }),
+    collect: (monitor) => ({ isDragging: monitor.isDragging() }),
+    canDrag: () => !isSelectionMode, // v6.0.166: 选择模式下禁止拖拽
+  });
+
+  const [{ isOver }, drop] = useDrop({
+    accept: STORYBOARD_DND_TYPE,
+    collect: (monitor) => ({ isOver: monitor.isOver() }),
+    canDrop: () => !isSelectionMode, // v6.0.166: 选择模式下禁止drop
+    hover(item: { id: string; index: number }, monitor) {
+      if (!ref.current) return;
+      const dragIndex = item.index;
+      const hoverIndex = index;
+      if (dragIndex === hoverIndex) return;
+      const hoverBoundingRect = ref.current.getBoundingClientRect();
+      const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2;
+      const clientOffset = monitor.getClientOffset();
+      if (!clientOffset) return;
+      const hoverClientY = clientOffset.y - hoverBoundingRect.top;
+      if (dragIndex < hoverIndex && hoverClientY < hoverMiddleY) return;
+      if (dragIndex > hoverIndex && hoverClientY > hoverMiddleY) return;
+      onMoveCard(dragIndex, hoverIndex);
+      item.index = hoverIndex;
+    },
+  });
+
+  dragPreview(drop(ref));
+
+  return (
+    <div
+      ref={ref}
+      className={`relative transition-opacity ${isDragging ? 'opacity-30' : ''} ${isOver ? 'ring-2 ring-purple-500/50 rounded-2xl' : ''}`}
+    >
+      {/* v6.0.164: 拖拽手柄 — v6.0.166: 选择模式下隐藏 */}
+      {!isSelectionMode && (
+        <div
+          ref={drag as unknown as React.Ref<HTMLDivElement>}
+          className="absolute top-3 left-12 z-20 cursor-grab active:cursor-grabbing p-1 rounded bg-black/40 backdrop-blur-sm opacity-0 group-hover:opacity-100 hover:!opacity-100 transition-opacity"
+          title="拖拽排序"
+        >
+          <GripVertical className="w-3.5 h-3.5 text-white/70" />
+        </div>
+      )}
+      <StoryboardCard {...cardProps} />
+    </div>
   );
 }
 
@@ -158,30 +296,108 @@ export function StoryboardCard({ storyboard, index, characters, aspectRatio, onE
 interface StoryboardFormProps {
   editingStoryboard: Storyboard | null;
   characters: Character[];
+  seriesId?: string;       // v6.0.171: AI润色需要
+  seriesTitle?: string;    // v6.0.171: AI润色上下文
+  seriesStyle?: string;    // v6.0.171: AI润色上下文
   onSubmit: (data: Partial<Storyboard>) => void;
   onCancel: () => void;
 }
 
-export function StoryboardForm({ editingStoryboard, characters, onSubmit, onCancel }: StoryboardFormProps) {
+export function StoryboardForm({ editingStoryboard, characters, seriesId, seriesTitle, seriesStyle, onSubmit, onCancel }: StoryboardFormProps) {
   const [formData, setFormData] = useState<Partial<Storyboard>>({
     description: '', dialogue: '', characters: [], location: '', timeOfDay: 'morning', cameraAngle: 'medium', duration: 10,
   });
+  // v6.0.171: AI润色状态
+  const [isPolishing, setIsPolishing] = useState(false);
+  const [polishTarget, setPolishTarget] = useState<string | null>(null);
 
   useEffect(() => { if (editingStoryboard) setFormData(editingStoryboard); }, [editingStoryboard]);
   const isEditing = !!editingStoryboard;
+
+  // v6.0.171: AI润色处理函数
+  const handlePolish = async (mode: 'full' | 'description_only' | 'dialogue_only') => {
+    if (!formData.description || formData.description.trim().length < 5) {
+      toast.error('场景描述过短，至少需要5个字');
+      return;
+    }
+    if (!seriesId) { toast.error('缺少系列信息'); return; }
+    setIsPolishing(true);
+    setPolishTarget(mode);
+    try {
+      const charNames = (formData.characters || [])
+        .map(cid => characters.find(c => c.id === cid)?.name)
+        .filter(Boolean);
+      const result = await apiRequest(`/series/${seriesId}/storyboards/polish`, {
+        method: 'POST',
+        body: JSON.stringify({
+          description: formData.description,
+          dialogue: formData.dialogue,
+          characters: charNames,
+          location: formData.location,
+          timeOfDay: formData.timeOfDay,
+          cameraAngle: formData.cameraAngle,
+          seriesTitle, seriesStyle, mode,
+        }),
+        timeout: 35000,
+      });
+      if (result.success && result.data) {
+        const updates: Partial<Storyboard> = {};
+        if (result.data.description) updates.description = result.data.description;
+        if (result.data.dialogue) updates.dialogue = result.data.dialogue;
+        setFormData(prev => ({ ...prev, ...updates }));
+        toast.success('AI润色完成');
+      } else {
+        toast.error('润色失败：' + (result.error || '未知错误'));
+      }
+    } catch (err: unknown) {
+      console.error('[StoryboardForm] Polish error:', err);
+      toast.error('润色失败: ' + getErrorMessage(err));
+    } finally {
+      setIsPolishing(false);
+      setPolishTarget(null);
+    }
+  };
 
   return (
     <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
       <h3 className="text-lg font-semibold text-white mb-4">{isEditing ? '编辑分镜' : '新建分镜'}</h3>
       <div className="space-y-4">
         <div>
-          <Label className="text-white mb-2 block">场景描述 *</Label>
+          <div className="flex items-center justify-between mb-2">
+            <Label className="text-white">场景描述 *</Label>
+            {seriesId && formData.description && formData.description.trim().length >= 5 && (
+              <button
+                onClick={() => handlePolish(formData.dialogue ? 'full' : 'description_only')}
+                disabled={isPolishing}
+                className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-gradient-to-r from-violet-500/15 to-fuchsia-500/15 border border-violet-500/25 text-violet-300 hover:from-violet-500/25 hover:to-fuchsia-500/25 transition-all disabled:opacity-50"
+                title={formData.dialogue ? 'AI同时润色描述和对白' : 'AI润色场景描述'}
+              >
+                {isPolishing && (polishTarget === 'full' || polishTarget === 'description_only')
+                  ? <><Loader2 className="w-3 h-3 animate-spin" />润色中...</>
+                  : <><Sparkles className="w-3 h-3" />AI润色{formData.dialogue ? '(描述+对白)' : ''}</>}
+              </button>
+            )}
+          </div>
           <textarea value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })}
             placeholder="详细描述这个场景中发生的事情、环境、氛围等" rows={3}
             className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none" />
         </div>
         <div>
-          <Label className="text-white mb-2 block">对白（可选）</Label>
+          <div className="flex items-center justify-between mb-2">
+            <Label className="text-white">对白（可选）</Label>
+            {seriesId && formData.dialogue && formData.dialogue.trim().length > 0 && (
+              <button
+                onClick={() => handlePolish('dialogue_only')}
+                disabled={isPolishing}
+                className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-gradient-to-r from-cyan-500/15 to-blue-500/15 border border-cyan-500/25 text-cyan-300 hover:from-cyan-500/25 hover:to-blue-500/25 transition-all disabled:opacity-50"
+                title="AI润色对白台词"
+              >
+                {isPolishing && polishTarget === 'dialogue_only'
+                  ? <><Loader2 className="w-3 h-3 animate-spin" />润色中...</>
+                  : <><Sparkles className="w-3 h-3" />AI润色对白</>}
+              </button>
+            )}
+          </div>
           <textarea value={formData.dialogue} onChange={(e) => setFormData({ ...formData, dialogue: e.target.value })}
             placeholder="角色台词或旁白" rows={2}
             className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none" />

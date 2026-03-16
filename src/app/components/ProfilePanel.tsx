@@ -11,6 +11,7 @@ import * as seriesAPI from '../services';
 import { getSeriesDetail } from '../services';
 import { normalizeWorks, convertWorkToComic } from '../utils';
 import { useVideoQuota } from '../hooks/useVideoQuota';
+import { getErrorMessage } from '../utils';
 import type { Comic, CommunitySeriesWork } from '../types/index';
 import type { Series } from '../types';
 
@@ -20,7 +21,7 @@ interface ProfilePanelProps {
   onLogout: () => void;
   /** v6.0.98: Open PaymentDialog */
   onOpenPayment?: () => void;
-  /** v6.0.98: Open AdminPanel (only passed when userPhone === ADMIN_PHONE) */
+  /** v6.0.98: Open AdminPanel (only passed when user is admin, verified server-side) */
   onOpenAdmin?: () => void;
 }
 
@@ -87,7 +88,7 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
       } else {
         setUserNickname(`用户${userPhone.slice(-4)}`);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       setUserNickname(`用户${userPhone.slice(-4)}`);
     }
   };
@@ -174,13 +175,15 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
       
       // 分页断（仅针对社区作品）
       setHasMore(communityResult.works?.length >= ITEMS_PER_PAGE);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[ProfilePanel] ❌ Failed to load works:', error);
+      const errMsg = getErrorMessage(error);
+      setError(errMsg);
       
       // 🔥 v4.2.66: 检测离线模式
-      if (error.message?.includes('offline') || 
-          error.message?.includes('timeout') || 
-          error.message?.includes('Network error')) {
+      if (errMsg.includes('offline') || 
+          errMsg.includes('timeout') || 
+          errMsg.includes('Network error')) {
         console.warn('[ProfilePanel] 🔌 Entering offline mode');
         setIsOffline(true);
       }
@@ -233,7 +236,7 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
         setHasMore(result.works.length >= ITEMS_PER_PAGE);
         updateStats(deduplicatedWorks);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('[ProfilePanel] Failed to load more:', error);
     } finally {
       setIsLoadingMore(false);
@@ -274,7 +277,7 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
         setWorks(updatedWorks);
         updateStats(updatedWorks);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('[ProfilePanel] Error updating task statuses:', error);
     }
   };
@@ -323,9 +326,9 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
         // 如果社区API失败，用本地数据构造基本视图
         toast.error('加载漫剧详情失败，请稍后重试');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[ProfilePanel] Failed to open series viewer:', error);
-      toast.error('网络错误，无法加载漫剧');
+      toast.error('无法加载系列详情');
     }
   };
 

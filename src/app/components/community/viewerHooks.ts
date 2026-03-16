@@ -84,20 +84,20 @@ export function useSeriesViewerInteractions({
   const loadComments = async () => {
     setIsLoadingComments(true);
     try { const result = await getSeriesComments(series.id, 1, 20); if (result.success) setComments(result.data || []); }
-    catch (error) { console.error('[SeriesViewer] Failed to load comments:', error); }
+    catch (error: unknown) { console.error('[SeriesViewer] Failed to load comments:', error); }
     finally { setIsLoadingComments(false); }
   };
 
   const handleLike = async () => {
     if (!userPhone) return;
     try { const result = await likeSeries(series.id, userPhone); if (result.success && result.data) { setIsLiked(result.data.isLiked); setLikes(result.data.likes); } }
-    catch (error) { console.error('[SeriesViewer] Like failed:', error); }
+    catch (error: unknown) { console.error('[SeriesViewer] Like failed:', error); }
   };
 
   const handleComment = async () => {
     if (!userPhone || !commentText.trim()) return;
     try { const result = await commentSeries(series.id, userPhone, commentText.trim()); if (result.success) { setCommentText(''); await loadComments(); } }
-    catch (error) { console.error('[SeriesViewer] Comment failed:', error); }
+    catch (error: unknown) { console.error('[SeriesViewer] Comment failed:', error); }
   };
 
   useEffect(() => {
@@ -124,7 +124,7 @@ export function useSeriesViewerInteractions({
   const handleRecoverVideo = async () => {
     setIsLoadingVideo(true);
     try { await recoverAllTasks(series.id); setTimeout(() => { setUrlExpired(false); setIsLoadingVideo(false); window.location.reload(); }, 2000); }
-    catch (error) { console.error('[SeriesViewer] Failed to recover video:', error); setIsLoadingVideo(false); }
+    catch (error: unknown) { console.error('[SeriesViewer] Failed to recover video:', error); setIsLoadingVideo(false); }
   };
 
   const handleShare = async () => {
@@ -138,7 +138,7 @@ export function useSeriesViewerInteractions({
 
   const handleDownload = async (videoUrl: string) => {
     try { const a = document.createElement('a'); a.href = videoUrl; a.download = `${series.title}-${currentEpisode?.episodeNumber}集.mp4`; a.target = '_blank'; a.rel = 'noopener noreferrer'; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
-    catch (error) { console.error('Failed to download video:', error); window.open(videoUrl, '_blank'); }
+    catch (error: unknown) { console.error('Failed to download video:', error); window.open(videoUrl, '_blank'); }
   };
 
   return { isLiked, likes, comments, commentText, setCommentText, showComments, setShowComments, isLoadingComments, urlExpired, setUrlExpired, isLoadingVideo, handleLike, handleComment, handleVideoError, handleRecoverVideo, handleShare, handleDownload };

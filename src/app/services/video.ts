@@ -4,11 +4,13 @@
  */
 
 import { apiRequest, apiPost, getVideoCodecPreference } from '../utils';
+import { getErrorMessage } from '../utils';
 import type { Series, Episode, Storyboard } from '../types';
 import { updateSeries } from './series';
 import { buildVideoPrompt } from './series';
 import { createVideoTask, pollTaskStatus } from './volcengine';
-import type { TaskStatus } from './volcengine';
+import type { TaskStatus, VideoTaskData } from './volcengine';
+import { QuotaExceededError, PollingTimeoutError } from './volcengine';
 import { emitQuotaExceeded } from '../utils/events';
 
 // ═══════════════════════════════════════════════════════════════════
@@ -30,11 +32,10 @@ export async function mergeEpisodeVideos(
 
   // v6.0.105: 检测 useClientMerge 信号（服务器主动路由到本地合并）
   // 三重检测: 顶层属性 / data子属性 / 错误字符串关键词
-  const rawResult = result as any;
   const isUseClientMerge =
-    rawResult.useClientMerge === true ||
-    rawResult.data?.useClientMerge === true ||
-    (typeof rawResult.error === 'string' && rawResult.error.includes('本地合并'));
+    result.useClientMerge === true ||
+    result.data?.useClientMerge === true ||
+    (typeof result.error === 'string' && result.error.includes('本地合并'));
   if (isUseClientMerge) {
     console.log(`[VideoMerger] Server recommends client-side merge: ${result.error || '(no message)'}`);
     return { success: false, data: { useClientMerge: true }, error: result.error || '服务器建议使用本地合并' };
@@ -132,19 +133,20 @@ export function cancelBatchGeneration(seriesId: string): void {
 
 function isSeriesCancelled(seriesId: string): boolean { return cancelledSeriesIds.has(seriesId); }
 
-async function fetchExistingVideoTasks(seriesId: string): Promise<Map<string, ExistingStoryboardTask>> {
+/** v6.0.183: Exported for use by useStoryboardBatchGeneration pre-check */
+export async function fetchExistingVideoTasks(seriesId: string): Promise<Map<string, ExistingStoryboardTask>> {
   const taskMap = new Map<string, ExistingStoryboardTask>();
   try {
     const result = await apiRequest(`/series/${seriesId}/video-task-status`, { method: 'GET', timeout: 15000, maxRetries: 1, silent: true });
-    if (result.success && (result as any).storyboardTasks) {
-      const tasks = (result as any).storyboardTasks;
+    if (result.success && result.storyboardTasks) {
+      const tasks: Record<string, any> = result.storyboardTasks;
       for (const [sbId, task] of Object.entries(tasks)) {
-        const t = task as any;
+        const t = task as Record<string, any>;
         taskMap.set(sbId, { taskId: t.taskId || '', status: t.status || 'unknown', videoUrl: t.videoUrl || '', episodeNumber: t.episodeNumber, sceneNumber: t.sceneNumber });
       }
       console.log(`[BatchVideo] 📋 Pre-check: ${taskMap.size} storyboards already have tasks`);
     }
-  } catch (err: any) { console.warn(`[BatchVideo] Pre-check failed (non-blocking): ${err.message}`); }
+  } catch (err: unknown) { console.warn(`[BatchVideo] Pre-check failed (non-blocking): ${getErrorMessage(err)}`); }
   return taskMap;
 }
 
@@ -240,7 +242,7 @@ export async function generateAllVideosForSeries(
     const summary = `completed=${progress.completedStoryboards}, skipped=${progress.skippedStoryboards}, failed=${progress.failedStoryboards}`;
     console.log(`[BatchVideo] 🔓 Released lock for series ${series.id} (${summary}), active locks: ${activeBatchSeriesIds.size}`);
     return { success: true };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[BatchVideo] ❌ Batch generation failed:', error);
     progress.status = 'failed';
     batchTasks.set(taskId, progress);
@@ -248,7 +250,7 @@ export async function generateAllVideosForSeries(
     await syncBatchProgressToDatabase(series.id, progress);
     activeBatchSeriesIds.delete(series.id);
     console.log(`[BatchVideo] 🔓 Released lock for series ${series.id}, active locks: ${activeBatchSeriesIds.size}`);
-    return { success: false, error: error.message || 'Batch generation failed' };
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -257,9 +259,9 @@ async function syncBatchProgressToDatabase(seriesId: string, progress: BatchGene
   try {
     await updateSeries(seriesId, {
       metadata: { batchGenerationStatus: progress.status, batchGenerationProgress: progress.progress, lastBatchUpdate: new Date().toISOString() },
-    } as any);
-  } catch (error: any) {
-    console.warn('[BatchVideo] syncProgressToDatabase failed (non-blocking):', error.message);
+    });
+  } catch (error: unknown) {
+    console.warn('[BatchVideo] syncProgressToDatabase failed (non-blocking):', getErrorMessage(error));
   }
 }
 
@@ -314,15 +316,16 @@ async function generateVideosForEpisode(
           success = true;
           consecutiveNetworkFails = 0;
         } else { throw new Error(result.error || 'Generation failed'); }
-      } catch (error: any) {
+      } catch (error: unknown) {
         retryCount++;
-        const isNetworkError = error.message?.includes('Failed to fetch') || error.message?.includes('网络连接') || error.message?.includes('Edge Function') || error.message?.includes('timeout') || error.message?.includes('TIMEOUT');
+        const errMsg = getErrorMessage(error);
+        const isNetworkError = errMsg.includes('Failed to fetch') || errMsg.includes('网络连接') || errMsg.includes('Edge Function') || errMsg.includes('timeout') || errMsg.includes('TIMEOUT');
         if (isNetworkError) {
           consecutiveNetworkFails++;
         }
         if (retryCount > maxRetries) {
           failed++;
-          console.warn(`[BatchVideo] ❌ E${episode.episodeNumber}/S${storyboard.sceneNumber} failed after ${maxRetries} retries: ${error.message?.substring(0, 100)}`);
+          console.warn(`[BatchVideo] ❌ E${episode.episodeNumber}/S${storyboard.sceneNumber} failed after ${maxRetries} retries: ${errMsg.substring(0, 100)}`);
         }
       }
     }
@@ -377,14 +380,14 @@ async function generateVideoForStoryboard(
     if (result.success) {
       const taskId = result.local_task_id || result.taskId || result.task_id;
       if (!taskId) return { success: false, error: 'No task ID returned from server' };
-      const isDuplicate = !!(result as any).duplicate;
-      const existingVideoUrl = (result as any).existingVideoUrl || '';
+      const isDuplicate = !!result.duplicate;
+      const existingVideoUrl = result.existingVideoUrl || '';
       return { success: true, taskId, duplicate: isDuplicate, existingVideoUrl };
     }
 
     return { success: false, error: result.error || 'Failed to create video task' };
-  } catch (error: any) {
-    return { success: false, error: error.message || 'Failed to generate video' };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -435,12 +438,12 @@ export async function generateStoryboardVideo(
   };
 
   console.log(`[SeriesVideoService] Submitting video task for storyboard ${storyboard.id}, episode ${episodeNumber}, scene ${storyboard.sceneNumber}, audio=true`);
-  let task: any;
+  let task: VideoTaskData;
   try {
     task = await createVideoTask(taskParams);
-  } catch (err: any) {
+  } catch (err: unknown) {
     // v6.0.96: quota exceeded — emit global event for PaymentDialog
-    if (err.quotaExceeded && err.quotaInfo) {
+    if (err instanceof QuotaExceededError) {
       emitQuotaExceeded(err.quotaInfo);
     }
     throw err;
@@ -463,7 +466,7 @@ export async function generateStoryboardVideo(
   // v6.0.75: 处理轮询超时——任务可能仍在处理中
   if (result.status === 'timeout') {
     console.warn(`[SeriesVideoService] ⏳ Polling timeout for task ${taskId}, task may still be processing in background`);
-    throw new Error(`视频仍在成中，请稍后刷新页面查看结果。任务ID: ${taskId}`);
+    throw new PollingTimeoutError(taskId);
   }
   
   if (!result.videoUrl) throw new Error('视频生成完成但未返回视频URL，请稍后在任务列表中查看');

@@ -1,6 +1,6 @@
 /**
  * Supabase Edge Function 入口文件 — /server/ 目录
- * v6.0.132: video-proxy三层修复——timeout增大+DB fallback扩展所有URL+bulk-refresh OSS HEAD验证
+ * v6.0.175: 暗色主题确认对话框替代原生confirm()
  *
  * 此文件是 Figma Make 平台实际部署的 Edge Function 入口。
  * 前端请求 /functions/v1/make-server-fc31472c/<route> 由此文件接收并路由到 app.tsx。
@@ -12,7 +12,7 @@
 import { Hono } from "npm:hono@4.0.2";
 import { cors } from "npm:hono@4.0.2/cors";
 
-const VERSION = "v6.0.132";
+const VERSION = "v6.0.174";
 const PREFIX = "/make-server-fc31472c";
 
 console.log(`[Entry:server] ${VERSION} — starting...`);

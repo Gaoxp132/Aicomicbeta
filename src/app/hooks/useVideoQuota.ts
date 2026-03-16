@@ -26,7 +26,7 @@ export function useVideoQuota(userPhone: string | undefined) {
       if (result.success && result.data) {
         setQuota(result.data as VideoQuotaInfo);
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.warn('[useVideoQuota] Failed to fetch quota:', err);
     } finally {
       setIsLoading(false);

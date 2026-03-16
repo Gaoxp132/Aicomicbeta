@@ -1,6 +1,6 @@
 /**
  * Supabase Edge Function 入口文件
- * v6.0.132: video-proxy三层修复——timeout增大+DB fallback扩展所有URL+bulk-refresh OSS HEAD验证
+ * v6.0.175: 暗色主题确认对话框替代原生confirm()
  *
  * REBUILD_HASH: rf_20260216_v6040_fix_thumbnail_mp4_resolution
  * DEPLOY_TS: 2026-02-16T23:59:50Z
@@ -9,7 +9,7 @@
 import { Hono } from "npm:hono@4.0.2";
 import { cors } from "npm:hono@4.0.2/cors";
 
-const VERSION = "v6.0.132";
+const VERSION = "v6.0.174";
 const PREFIX = "/make-server-fc31472c";
 
 console.log(`[Entry:make-server] ${VERSION} — starting...`);

@@ -1,9 +1,9 @@
 /**
  * AI漫剧 - 主应用组件
- * v6.0.132 - vite.config.ts optimizeDeps fix for motion/framer-motion resolution
+ * v6.0.175 - 暗色主题确认对话框替代原生confirm()
  */
 
-import React, { useState, useCallback, lazy, Suspense, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Toaster } from 'sonner';
 
 // Core components (loaded eagerly for first paint)
@@ -17,8 +17,22 @@ import { EdgeFunctionError, ServerLoadingIndicator } from './components/ServerSt
 // through pnpm virtual store times out or returns 500 under the proxy.
 import { SeriesCreationPanel } from './components/SeriesCreationPanel';
 
+// v6.0.140: CommunityPanel loaded eagerly — same dynamic import() failure through Figma proxy
+import { CommunityPanel } from './components/CommunityPanel';
+
+// v6.0.142: ALL remaining lazy() imports converted to eager static imports
+// Root cause: ANY component importing motion/react fails under Figma proxy's on-demand Vite transform
+// (LoginDialog, SettingsDialog, HomeCreationPanel, ProfilePanel, ImmersiveVideoViewer, PaymentDialog, AdminPanel)
+import { HomeCreationPanel } from './components/HomeCreationPanel';
+import { ProfilePanel } from './components/ProfilePanel';
+import { LoginDialog } from './components/LoginDialog';
+import { SettingsDialog } from './components/SettingsDialog';
+import { ImmersiveVideoViewer } from './components/ImmersiveVideoViewer';
+import { PaymentDialog } from './components/PaymentDialog';
+import { AdminPanel } from './components/AdminPanel';
+
 // Hooks
-import { useAuth, useEdgeFunctionStatus } from './hooks';
+import { useAuth, useEdgeFunctionStatus, useAdminCheck } from './hooks';
 import { useAdminPaymentPoller } from './hooks/useAdminPaymentPoller';
 
 // Event bus
@@ -27,48 +41,10 @@ import { onQuotaExceeded, type QuotaExceededInfo } from './utils/events';
 // Types
 import type { Series, Comic } from './types';
 
-// ── Lazy-loaded tab panels (code-split) ─────────────────────────────
-const HomeCreationPanel = lazy(() =>
-  import('./components/HomeCreationPanel').then(m => ({ default: m.HomeCreationPanel }))
-);
-const CommunityPanel = lazy(() =>
-  import('./components/CommunityPanel').then(m => ({ default: m.CommunityPanel }))
-);
-const ProfilePanel = lazy(() =>
-  import('./components/ProfilePanel').then(m => ({ default: m.ProfilePanel }))
-);
-const LoginDialog = lazy(() =>
-  import('./components/LoginDialog').then(m => ({ default: m.LoginDialog }))
-);
-const SettingsDialog = lazy(() =>
-  import('./components/SettingsDialog').then(m => ({ default: m.SettingsDialog }))
-);
-const ImmersiveVideoViewer = lazy(() =>
-  import('./components/ImmersiveVideoViewer').then(m => ({ default: m.ImmersiveVideoViewer }))
-);
-const PaymentDialog = lazy(() =>
-  import('./components/PaymentDialog').then(m => ({ default: m.PaymentDialog }))
-);
-const AdminPanel = lazy(() =>
-  import('./components/AdminPanel').then(m => ({ default: m.AdminPanel }))
-);
-
 // ── Types ────────────────────────────────────────────────────────────
 type TabId = 'create' | 'works' | 'community' | 'profile';
 
-// ── Loading fallback ─────────────────────────────────────────────────
-function TabLoader() {
-  return (
-    <div className="flex items-center justify-center py-32">
-      <div className="flex flex-col items-center gap-3">
-        <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
-        <span className="text-sm text-gray-500">加载中...</span>
-      </div>
-    </div>
-  );
-}
-
-const ADMIN_PHONE = '18565821136';
+// v6.0.176: ADMIN_PHONE 硬编码已移除，改用 useAdminCheck 从服务端验证
 
 // ── Main App ─────────────────────────────────────────────────────────
 export default function App() {
@@ -114,7 +90,8 @@ export default function App() {
   // ── v6.0.96: Admin Panel ──
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [adminPanelDefaultTab, setAdminPanelDefaultTab] = useState<'users' | 'payments' | 'settings'>('users');
-  const isAdmin = userPhone === ADMIN_PHONE;
+  // v6.0.176: 从服务端验证管理员身份，不再前端硬编码
+  const { isAdmin, isSuperAdmin } = useAdminCheck(userPhone);
 
   // ── v6.0.102: Admin payment poller (only active when admin is logged in) ──
   const { pendingCount: pendingPaymentCount, notifPermission, requestPermission } = useAdminPaymentPoller(
@@ -214,8 +191,7 @@ export default function App() {
         />
 
         {/* Main content area */}
-        <main className="pt-16 pb-20 lg:pb-6 min-h-screen">
-          <Suspense fallback={<TabLoader />}>
+        <main className="pt-20 pb-20 lg:pb-6 min-h-screen px-3 sm:px-4 lg:px-6">
             {activeTab === 'create' && (
               <HomeCreationPanel
                 userPhone={userPhone}
@@ -253,7 +229,6 @@ export default function App() {
                 onOpenAdmin={isAdmin ? () => setShowAdminPanel(true) : undefined}
               />
             )}
-          </Suspense>
         </main>
 
         {/* Mobile bottom navigation */}
@@ -265,57 +240,56 @@ export default function App() {
         />
 
         {/* Overlays & Dialogs */}
-        <Suspense fallback={null}>
-          {showLoginDialog && (
-            <LoginDialog
-              isOpen={showLoginDialog}
-              onClose={() => setShowLoginDialog(false)}
-              onLoginSuccess={handleLoginSuccess}
-            />
-          )}
+        {showLoginDialog && (
+          <LoginDialog
+            isOpen={showLoginDialog}
+            onClose={() => setShowLoginDialog(false)}
+            onLoginSuccess={handleLoginSuccess}
+          />
+        )}
 
-          {showSettings && (
-            <SettingsDialog
-              isOpen={showSettings}
-              onClose={() => setShowSettings(false)}
-              userPhone={userPhone}
-              onLogout={handleLogout}
-            />
-          )}
+        {showSettings && (
+          <SettingsDialog
+            isOpen={showSettings}
+            onClose={() => setShowSettings(false)}
+            userPhone={userPhone}
+            onLogout={handleLogout}
+          />
+        )}
 
-          {selectedComic && (
-            <ImmersiveVideoViewer
-              work={selectedComic}
-              allWorks={selectedComicsList}
-              userPhone={userPhone}
-              onClose={handleCloseViewer}
-            />
-          )}
+        {selectedComic && (
+          <ImmersiveVideoViewer
+            work={selectedComic}
+            allWorks={selectedComicsList}
+            userPhone={userPhone}
+            onClose={handleCloseViewer}
+          />
+        )}
 
-          {/* v6.0.96: Payment Dialog — triggered when daily quota is exceeded */}
-          {showPaymentDialog && userPhone && (
-            <PaymentDialog
-              isOpen={showPaymentDialog}
-              onClose={() => setShowPaymentDialog(false)}
-              userPhone={userPhone}
-              quotaInfo={quotaInfo}
-              onPaymentRecorded={() => {
-                // After recording payment intent, user can close and admin will add credits
-              }}
-            />
-          )}
+        {/* v6.0.96: Payment Dialog — triggered when daily quota is exceeded */}
+        {showPaymentDialog && userPhone && (
+          <PaymentDialog
+            isOpen={showPaymentDialog}
+            onClose={() => setShowPaymentDialog(false)}
+            userPhone={userPhone}
+            quotaInfo={quotaInfo}
+            onPaymentRecorded={() => {
+              // After recording payment intent, user can close and admin will add credits
+            }}
+          />
+        )}
 
-          {/* v6.0.96: Admin Panel — only for admin account */}
-          {showAdminPanel && isAdmin && (
-            <AdminPanel
-              adminPhone={ADMIN_PHONE}
-              onClose={() => setShowAdminPanel(false)}
-              defaultTab={adminPanelDefaultTab}
-              onRequestNotifPermission={requestPermission}
-              notifPermission={notifPermission}
-            />
-          )}
-        </Suspense>
+        {/* v6.0.96: Admin Panel — only for admin account */}
+        {showAdminPanel && isAdmin && (
+          <AdminPanel
+            adminPhone={userPhone}
+            onClose={() => setShowAdminPanel(false)}
+            defaultTab={adminPanelDefaultTab}
+            onRequestNotifPermission={requestPermission}
+            notifPermission={notifPermission}
+            isSuperAdmin={isSuperAdmin}
+          />
+        )}
       </div>
     </ErrorBoundary>
   );

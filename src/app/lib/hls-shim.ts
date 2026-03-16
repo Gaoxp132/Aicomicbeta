@@ -7,7 +7,7 @@
 
 const CDN_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1.6.15/dist/hls.light.min.js';
 
-let _real: any = typeof window !== 'undefined' ? (window as any).Hls : null;
+let _real: any = typeof window !== 'undefined' ? window.Hls : null;
 let _loading: Promise<any> | null = null;
 
 /**
@@ -23,7 +23,7 @@ export function preloadHls(): Promise<any> {
     const script = document.createElement('script');
     script.src = CDN_URL;
     script.onload = () => {
-      _real = (window as any).Hls || null;
+      _real = window.Hls || null;
       resolve(_real);
     };
     script.onerror = () => {
@@ -41,7 +41,7 @@ export function preloadHls(): Promise<any> {
  * Static methods like Hls.isSupported() work synchronously after preloadHls() resolves.
  * Construction (new Hls({...})) also works once loaded.
  */
-const HlsProxy = new Proxy(function () {} as any, {
+const HlsProxy = new Proxy(function () {} as Function, {
   get(_target, prop: string | symbol) {
     if (typeof prop === 'symbol') return undefined;
     // Allow checking load state

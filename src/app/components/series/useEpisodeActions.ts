@@ -13,6 +13,7 @@ import type { Series, Episode } from '../../types';
 import * as services from '../../services';
 import { apiPost, apiRequest, ASPECT_TO_RESOLUTION } from '../../utils';
 import { clientMergeEpisode } from './ClientVideoMerger';
+import { getErrorMessage } from '../../utils';
 
 // ── 钩子参数类型 ─────────────────────────────────────────────────────────
 
@@ -21,6 +22,7 @@ interface UseEpisodeActionsOptions {
   episodes: Episode[];
   userPhone?: string;
   onEpisodesUpdate: (episodes: Episode[]) => void;
+  onSeriesUpdate?: (series: Series) => void; // v6.0.143: 用于 handleSmartGenerate 设置 status='generating'
 }
 
 // ── 7阶段进度提示（v6.0.92）────────────────────────────────────────────
@@ -44,6 +46,7 @@ export function useEpisodeActions({
   episodes,
   userPhone,
   onEpisodesUpdate,
+  onSeriesUpdate,
 }: UseEpisodeActionsOptions) {
   const [isSmartGenerating, setIsSmartGenerating] = useState(false);
   const [smartProgress, setSmartProgress] = useState('');
@@ -102,26 +105,25 @@ export function useEpisodeActions({
       );
 
       if (result.success) {
-        toast.success('AI 创作完成！正在刷新剧集数据...');
-        const refreshResult = await services.getSeries(series.id);
-        if (refreshResult.success && refreshResult.data?.episodes) {
-          onEpisodesUpdate(refreshResult.data.episodes);
-        } else {
-          // 兜底：页面刷新以触发数据重新加载
-          setTimeout(() => window.location.reload(), 1500);
+        // v6.0.143: generateFullAI 现在是 fire-and-forget，立即返回 success
+        // 不需要在这里刷新数据 — SeriesEditor 的轮询机制会检测 status 变化并自动更新 episodes
+        toast.success('AI 创作已启动！请等待轮询自动检测完成。预计需要 2-5 分钟。');
+        if (onSeriesUpdate) {
+          onSeriesUpdate({ ...series, status: 'generating' });
         }
       } else {
         toast.error('AI 创作失败：' + (result.error || '未知错误'));
       }
-    } catch (error: any) {
-      console.error('[EpisodeActions] handleSmartGenerate error:', error.message);
-      toast.error('AI 创作失败：' + error.message);
+    } catch (error: unknown) {
+      const errMsg = getErrorMessage(error);
+      console.error('[EpisodeActions] handleSmartGenerate error:', errMsg);
+      toast.error('AI 创作失败：' + errMsg);
     } finally {
       phaseTimers.forEach(clearTimeout);
       setIsSmartGenerating(false);
       setSmartProgress('');
     }
-  }, [series.id, userPhone, onEpisodesUpdate]);
+  }, [series.id, userPhone, onEpisodesUpdate, onSeriesUpdate]);
 
   // ── handleMergeVideos ─────────────────────────────────────────────────
   // v6.0.107: 服务器返回 skippedEpisodes 时，对每集自动触发 clientMergeEpisode 本地合并
@@ -133,7 +135,7 @@ export function useEpisodeActions({
     }
 
     // v6.0.111: 计算 preferredResolution
-    const seriesAspectRatio = series.coherenceCheck?.aspectRatio || (series as any).coherence_check?.aspectRatio || '9:16';
+    const seriesAspectRatio = series.coherenceCheck?.aspectRatio || '9:16';
     const preferredResolution = ASPECT_TO_RESOLUTION[seriesAspectRatio];
 
     setIsMerging(true);
@@ -158,7 +160,7 @@ export function useEpisodeActions({
               continue;
             }
             try {
-              const { blobUrl, sizeMB, warnings } = await clientMergeEpisode(ep, ep.storyboards, undefined, { preferredResolution });
+              const { blobUrl, sizeMB, warnings } = await clientMergeEpisode(ep, ep.storyboards, undefined, { preferredResolution, seriesId: series.id });
               // v6.0.110: 显示合并警告（跳过的场景、分辨率排除）
               if (warnings?.length) {
                 warnings.forEach(w => toast.warning(`第${epNum}集: ${w}`, { duration: 8000 }));
@@ -172,10 +174,10 @@ export function useEpisodeActions({
               document.body.removeChild(a);
               clientMergedCount++;
               console.log(`[EpisodeManager] ✅ Client merge ep${epNum}: ${sizeMB}MB`);
-            } catch (clientErr: any) {
+            } catch (clientErr: unknown) {
               console.error(
                 `[EpisodeManager] ❌ Client merge ep${epNum} failed:`,
-                clientErr.message,
+                getErrorMessage(clientErr),
               );
             }
           }
@@ -199,9 +201,10 @@ export function useEpisodeActions({
       } else {
         toast.error('视频合并失败：' + (result.error || '未知错误'));
       }
-    } catch (error: any) {
-      console.error('[EpisodeManager] Merge videos error:', error.message);
-      toast.error('视频合并失败：' + error.message);
+    } catch (error: unknown) {
+      const errMsg = getErrorMessage(error);
+      console.error('[EpisodeManager] Merge videos error:', errMsg);
+      toast.error('视频合并失败：' + errMsg);
     } finally {
       setIsMerging(false);
     }
@@ -227,9 +230,10 @@ export function useEpisodeActions({
       } else {
         toast.error('视频修复失败：' + (result.error || '未知错误'));
       }
-    } catch (error: any) {
-      console.error('[EpisodeActions] Repair error:', error.message);
-      toast.error('视频修复失败：' + error.message);
+    } catch (error: unknown) {
+      const errMsg = getErrorMessage(error);
+      console.error('[EpisodeActions] Repair error:', errMsg);
+      toast.error('视频修复失败：' + errMsg);
     }
   }, [series.id, userPhone, onEpisodesUpdate]);
 
@@ -250,9 +254,10 @@ export function useEpisodeActions({
       } else {
         toast.error('缩略图同步失败：' + (result.error || '未知错误'));
       }
-    } catch (error: any) {
-      console.error('[EpisodeActions] Sync thumbnails error:', error.message);
-      toast.error('缩略图同步失败：' + error.message);
+    } catch (error: unknown) {
+      const errMsg = getErrorMessage(error);
+      console.error('[EpisodeActions] Sync thumbnails error:', errMsg);
+      toast.error('缩略图同步失败：' + errMsg);
     } finally {
       setIsSyncingThumbnails(false);
     }

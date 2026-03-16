@@ -12,6 +12,17 @@ import type { Comic } from '../types';
 export { getApiUrl, projectId };
 
 // ═══════════════════════════════════════════════════════════════════
+// [0] Error utility
+// ═══════════════════════════════════════════════════════════════════
+
+/** Safely extract error message from unknown catch value */
+export function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  return String(err);
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // [A] API Client (was: apiClient.ts)
 // ═══════════════════════════════════════════════════════════════════
 
@@ -80,7 +91,7 @@ export async function apiRequest(
       };
 
       if (body !== undefined && method !== 'GET' && method !== 'HEAD') {
-        fetchOptions.body = body instanceof FormData ? body : JSON.stringify(body);
+        fetchOptions.body = body instanceof FormData ? body : (typeof body === 'string' ? body : JSON.stringify(body));
       }
 
       const response = await fetch(url, fetchOptions);
@@ -119,25 +130,25 @@ export async function apiRequest(
       }
 
       return { success: true, data };
-    } catch (err: any) {
-      lastError = err;
+    } catch (err: unknown) {
+      lastError = err instanceof Error ? err : new Error(String(err));
 
-      if (err.name === 'AbortError') {
+      if (err instanceof Error && err.name === 'AbortError') {
         if (!silent) console.error(`[apiRequest] ${method} ${endpoint} → timeout after ${timeout}ms`);
         if (attempt < maxRetries) continue;
-        return { success: false, error: `���求超时 (${Math.round(timeout / 1000)}秒)` };
+        return { success: false, error: `请求超时 (${Math.round(timeout / 1000)}秒)` };
       }
 
-      if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
+      const errMsg = getErrorMessage(err);
+      if (errMsg.includes('Failed to fetch') || errMsg.includes('NetworkError')) {
         markNetworkFailure();
       }
 
       if (!silent) {
-        console.error(`[apiRequest] ${method} ${endpoint} attempt ${attempt + 1}/${maxRetries + 1}:`, err.message);
+        console.error(`[apiRequest] ${method} ${endpoint} attempt ${attempt + 1}/${maxRetries + 1}:`, errMsg);
       }
 
       if (attempt < maxRetries) {
-        // Exponential backoff
         await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
         continue;
       }
@@ -207,6 +218,18 @@ export async function apiUpload(
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// [A-2] Video Codec Preference (v6.0.77)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Returns the preferred video codec — always 'h265' for better compression.
+ * v6.0.77: H265 auto-default + fallback
+ */
+export function getVideoCodecPreference(): 'h265' | 'h264' {
+  return 'h265';
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // [B] Formatters (was: formatters.ts)
 // ═══════════════════════════════════════════════════════════════════
 
@@ -267,8 +290,8 @@ export async function shareContent(opts: {
     try {
       await navigator.share(opts);
       return 'shared';
-    } catch (err: any) {
-      if (err.name === 'AbortError') return 'cancelled';
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') return 'cancelled';
       // Fall through to clipboard
     }
   }
@@ -298,3 +321,111 @@ export async function shareContent(opts: {
 // ═══════════════════════════════════════════════════════════════════
 // [D] Work Converters (was: workConverters.ts)
 // ═══════════════════════════════════════════════════════════════════
+
+/**
+ * v6.0.83: 画面比例中文标签（EpisodePlayer / ImmersiveVideoViewer 显示用）
+ */
+export const ASPECT_RATIO_LABELS: Record<string, string> = {
+  '9:16': '竖屏',
+  '16:9': '横屏',
+  '1:1': '方形',
+  '3:4': '竖屏经典',
+  '4:3': '经典',
+};
+
+/**
+ * v6.0.111: 画面比例 → 推荐分辨率映射（客户端+服务端统一）
+ */
+export const ASPECT_TO_RESOLUTION: Record<string, string> = {
+  '9:16': '720x1280',
+  '16:9': '1280x720',
+  '1:1': '720x720',
+  '3:4': '720x960',
+  '4:3': '960x720',
+};
+
+/**
+ * v6.0.83: 获取 CSS aspect-ratio 值
+ */
+export function getAspectCssValue(aspectRatio?: string): string {
+  if (!aspectRatio) return '9/16';
+  return aspectRatio.replace(':', '/');
+}
+
+/**
+ * Normalize raw works array from API
+ */
+export function normalizeWorks(works: any[]): any[] {
+  if (!Array.isArray(works)) return [];
+  return works.map(work => ({
+    ...work,
+    id: work.id || work.task_id || '',
+    title: work.title || work.prompt || '无标题',
+    prompt: work.prompt || work.title || '',
+    style: work.style || '',
+    thumbnail: work.thumbnail || work.thumbnailUrl || work.image_url || '',
+    videoUrl: work.videoUrl || work.video_url || '',
+    createdAt: work.createdAt || work.created_at || new Date().toISOString(),
+    status: work.status || 'completed',
+    metadata: work.metadata || work.generation_metadata || null,
+    likes: work.likes || work.like_count || 0,
+    views: work.views || work.view_count || 0,
+    shares: work.shares || work.share_count || 0,
+    comments: work.comments || work.comment_count || 0,
+    userPhone: work.userPhone || work.user_phone || '',
+    userNickname: work.userNickname || work.user_nickname || '',
+    aspectRatio: work.aspectRatio || work.aspect_ratio || '',
+  }));
+}
+
+/**
+ * Convert a raw work object to Comic type for ImmersiveVideoViewer
+ */
+export function convertWorkToComic(work: any): Comic {
+  return {
+    id: work.id || work.task_id || '',
+    title: work.title || work.prompt || '无标题',
+    prompt: work.prompt || work.title || '',
+    style: work.style || '',
+    duration: work.duration || '',
+    thumbnail: work.thumbnail || work.thumbnailUrl || work.image_url || '',
+    videoUrl: work.videoUrl || work.video_url || '',
+    createdAt: work.createdAt ? new Date(work.createdAt) : (work.created_at ? new Date(work.created_at) : new Date()),
+    status: work.status || 'completed',
+    taskId: work.taskId || work.task_id,
+    imageUrls: work.imageUrls || work.image_urls,
+    resolution: work.resolution,
+    aspectRatio: work.aspectRatio || work.aspect_ratio,
+    fps: work.fps,
+    enableAudio: work.enableAudio,
+    model: work.model,
+    userPhone: work.userPhone || work.user_phone,
+    metadata: work.metadata || work.generation_metadata,
+    seriesId: work.seriesId || work.series_id,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// [E] Field Accessors — snake_case/camelCase 双兼容
+// ═══════════════════════════════════════════════════════════════════
+
+import type { Storyboard, Episode } from '../types';
+
+type RawStoryboard = Storyboard & { video_url?: string; thumbnail_url?: string; image_url?: string };
+type RawEpisode = Episode & { merged_video_url?: string };
+
+export function sbVideoUrl(sb: Storyboard): string {
+  return sb.videoUrl || (sb as RawStoryboard).video_url || '';
+}
+
+export function sbThumbnailUrl(sb: Storyboard): string {
+  return sb.thumbnailUrl || (sb as RawStoryboard).thumbnail_url || '';
+}
+
+export function sbImageUrl(sb: Storyboard): string {
+  return sb.imageUrl || (sb as RawStoryboard).image_url || '';
+}
+
+export function epMergedVideoUrl(ep: Episode): string {
+  return ep.mergedVideoUrl || (ep as RawEpisode).merged_video_url || '';
+}

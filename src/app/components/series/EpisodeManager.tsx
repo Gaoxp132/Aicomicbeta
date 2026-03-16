@@ -11,10 +11,11 @@ interface EpisodeManagerProps {
   series: Series;
   onEpisodeSelect: (episode: Episode) => void;
   onEpisodesUpdate: (episodes: Episode[]) => void;
+  onSeriesUpdate?: (series: Series) => void; // v6.0.143: 用于 handleSmartGenerate 触发 generating 状态
   userPhone?: string;
 }
 
-export function EpisodeManager({ series, onEpisodeSelect, onEpisodesUpdate, userPhone }: EpisodeManagerProps) {
+export function EpisodeManager({ series, onEpisodeSelect, onEpisodesUpdate, onSeriesUpdate, userPhone }: EpisodeManagerProps) {
   const [videoErrors, setVideoErrors] = useState<Record<string, any>>({});
   const [alertDismissed, setAlertDismissed] = useState(false);
   const [currentPlayingEpisodeId, setCurrentPlayingEpisodeId] = useState<string | null>(null);
@@ -32,7 +33,7 @@ export function EpisodeManager({ series, onEpisodeSelect, onEpisodesUpdate, user
     handleMergeVideos,
     handleRepairSingleEpisode,
     handleSyncThumbnails,
-  } = useEpisodeActions({ series, episodes, userPhone, onEpisodesUpdate });
+  } = useEpisodeActions({ series, episodes, userPhone, onEpisodesUpdate, onSeriesUpdate });
 
   const videoErrorCount = Object.keys(videoErrors).length;
 
@@ -171,7 +172,7 @@ export function EpisodeManager({ series, onEpisodeSelect, onEpisodesUpdate, user
                         />
                       </div>
                       <p className="text-xs text-gray-500 mt-4">
-                        预计需要 30-60 秒，页面会自动更新
+                        预计需要 2-5 分钟，页面会自动更新
                       </p>
                     </div>
                   );
@@ -214,7 +215,7 @@ export function EpisodeManager({ series, onEpisodeSelect, onEpisodesUpdate, user
                       )}
                     </div>
                     <p className="text-xs text-gray-500 mt-4">
-                      预计需要 30-60 秒，页面会自动更新
+                      预计需要 2-5 分钟，页面会自动更新
                     </p>
                   </div>
                 );

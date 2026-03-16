@@ -1,6 +1,6 @@
 /**
  * AI服务模块 - Doubao多模型智能路由 + Qwen兜底
- * v6.0.77
+ * v6.0.157: 新增多模态视觉支持——imageUrls参数可将图片注入user消息，自动强制seed-2-0-pro（唯一支持vision的模型）
  */
 
 import type { AITaskTier } from "./types.ts";
@@ -33,12 +33,42 @@ function _isModelAvailable(model: string): boolean {
 }
 
 /**
+ * v6.0.157: 将纯文本消息转换为多模态格式（图文混合）
+ * 仅修改最后一条 user 消息的 content 为 OpenAI multimodal 数组格式
+ */
+function _buildMultimodalMessages(
+  messages: Array<{ role: string; content: string }>,
+  imageUrls: string[],
+): Array<{ role: string; content: any }> {
+  // 找到最后一条user消息，将其content改为multimodal数组
+  const result = messages.map((msg, idx) => {
+    // 只在最后一条user消息注入图片
+    const isLastUser = msg.role === 'user' && messages.slice(idx + 1).every(m => m.role !== 'user');
+    if (!isLastUser) return msg;
+
+    const contentParts: any[] = [];
+    // 图片在前（模型先看图再读指令，效果更好）
+    for (const url of imageUrls) {
+      contentParts.push({ type: 'image_url', image_url: { url } });
+    }
+    contentParts.push({ type: 'text', text: msg.content });
+    return { role: msg.role, content: contentParts };
+  });
+  return result;
+}
+
+/**
  * 统一AI文本生成入口——Doubao多模型智能路由 + Qwen兜底
+ * v6.0.157: 新增 imageUrls 参数，传入时自动启用多模态视觉模式
+ *           - 多模态模式强制使用 seed-2-0-pro（唯一支持 vision 的 Doubao 模型）
+ *           - 图片以 image_url 格式注入最后一条 user 消息
+ *           - Qwen 兜底时降级为纯文本（忽略图片），并打印警告
  * @param params.messages - OpenAI格式消息
  * @param params.tier - 任务复杂度（heavy/medium/light）
  * @param params.temperature - 温度
  * @param params.max_tokens - 最大token数
  * @param params.timeout - 超时毫秒
+ * @param params.imageUrls - 可选：图片URL数组，传入时启用多模态视觉
  * @returns { content, model } 或 throw Error
  */
 export async function callAI(params: {
@@ -47,16 +77,37 @@ export async function callAI(params: {
   temperature?: number;
   max_tokens?: number;
   timeout?: number;
+  imageUrls?: string[];
 }): Promise<{ content: string; model: string }> {
-  const { messages, tier, temperature = 0.8, max_tokens, timeout = 60000 } = params;
+  const { messages, tier, temperature = 0.8, max_tokens, timeout = 60000, imageUrls } = params;
+  // v6.0.160: 全局清理 U+FFFD 替换字符——源码Unicode编码损坏导致prompt中混入乱码
+  const sanitizedMessages = messages.map(m => ({
+    ...m,
+    content: typeof m.content === 'string' ? m.content.replace(/\uFFFD+/g, '') : m.content,
+  }));
   const errors: string[] = [];
+
+  // v6.0.157: 多模态视觉模式检测
+  const isVisionMode = imageUrls && imageUrls.length > 0;
+  if (isVisionMode) {
+    console.log(`[AI] Vision mode: ${imageUrls.length} image(s), tier=${tier}, forcing pro model`);
+  }
 
   // Phase 1: 尝试 Doubao 模型（需要 VOLCENGINE_API_KEY）
   if (VOLCENGINE_API_KEY) {
-    const candidates = _getModelsForTier(tier).filter(_isModelAvailable);
+    // v6.0.157: vision模式强制pro模型（唯一支持图片理解），否则按tier路由
+    const candidates = isVisionMode
+      ? [DOUBAO_MODELS.pro].filter(_isModelAvailable)
+      : _getModelsForTier(tier).filter(_isModelAvailable);
+
     for (const model of candidates) {
       try {
-        const body: any = { model, messages, temperature };
+        // v6.0.157: vision模式将消息转为多模态格式
+        const finalMessages = isVisionMode
+          ? _buildMultimodalMessages(sanitizedMessages, imageUrls)
+          : sanitizedMessages;
+
+        const body: any = { model, messages: finalMessages, temperature };
         if (max_tokens) body.max_tokens = max_tokens;
 
         const resp = await fetchWithTimeout(DOUBAO_CHAT_URL, {
@@ -89,7 +140,7 @@ export async function callAI(params: {
           continue;
         }
 
-        console.log(`[AI] Doubao ${model} success (tier=${tier}, tokens=${data?.usage?.total_tokens || '?'})`);
+        console.log(`[AI] Doubao ${model} success (tier=${tier}${isVisionMode ? ',vision' : ''}, tokens=${data?.usage?.total_tokens || '?'})`);
         return { content, model };
       } catch (err: any) {
         const msg = err.name === 'AbortError' ? 'timeout' : err.message;
@@ -98,12 +149,49 @@ export async function callAI(params: {
         continue;
       }
     }
+
+    // v6.0.157: vision模式下pro耗尽时，降级为纯文本模式重试其他模型
+    if (isVisionMode && !_isModelAvailable(DOUBAO_MODELS.pro)) {
+      console.warn(`[AI] Vision mode pro model exhausted, falling back to text-only with tier=${tier} routing`);
+      const textCandidates = _getModelsForTier(tier).filter(_isModelAvailable);
+      for (const model of textCandidates) {
+        try {
+          const body: any = { model, messages: sanitizedMessages, temperature }; // 纯文本消息，不含图片
+          if (max_tokens) body.max_tokens = max_tokens;
+
+          const resp = await fetchWithTimeout(DOUBAO_CHAT_URL, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${VOLCENGINE_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          }, timeout);
+
+          if (resp.status === 429 || resp.status === 402) {
+            _exhaustedModels.set(model, Date.now());
+            errors.push(`${model}:${resp.status}(text-fallback)`);
+            continue;
+          }
+          if (!resp.ok) { errors.push(`${model}:${resp.status}(text-fallback)`); continue; }
+          const data = await resp.json();
+          const content = data?.choices?.[0]?.message?.content || '';
+          if (!content) { errors.push(`${model}:empty(text-fallback)`); continue; }
+
+          console.log(`[AI] Doubao ${model} text-fallback success (vision pro exhausted, tier=${tier})`);
+          return { content, model };
+        } catch (err: any) {
+          errors.push(`${model}:${err.name === 'AbortError' ? 'timeout' : err.message}(text-fallback)`);
+        }
+      }
+    }
   }
 
   // Phase 2: Qwen 兜底（需要 ALIYUN_BAILIAN_API_KEY，使用 OpenAI 兼容格式）
+  // v6.0.157: Qwen不支持视觉，降级为纯文本并打印警告
   if (ALIYUN_BAILIAN_API_KEY) {
+    if (isVisionMode) {
+      console.warn(`[AI] Qwen fallback does not support vision — degrading to text-only (${imageUrls.length} images dropped)`);
+    }
     try {
-      const body: any = { model: 'qwen-turbo', messages, temperature };
+      const body: any = { model: 'qwen-turbo', messages: sanitizedMessages, temperature };
       if (max_tokens) body.max_tokens = max_tokens;
 
       const resp = await fetchWithTimeout(DASHSCOPE_CHAT_URL, {
@@ -127,5 +215,5 @@ export async function callAI(params: {
     }
   }
 
-  throw new Error(`All AI models failed [tier=${tier}]: ${errors.join(' → ')}`);
+  throw new Error(`All AI models failed [tier=${tier}${isVisionMode ? ',vision' : ''}]: ${errors.join(' → ')}`);
 }

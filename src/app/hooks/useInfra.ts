@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { STORAGE_KEYS, getApiUrl, getAuthOnlyHeaders } from '../constants';
-import { markNetworkSuccess } from '../utils';
+import { markNetworkSuccess, getErrorMessage } from '../utils';
 
 // ═══════════════════════════════════════════════════════════════════
 // [1] useAuth
@@ -75,10 +75,10 @@ export function useCachedData<T>(fetchFn: () => Promise<T>, options: CacheOption
       const currentVersion = dataVersions.get(cacheKey) || 0;
       globalCache.set(cacheKey, { data: result, timestamp: now, version: currentVersion });
       setData(result); setLastUpdated(now); setError(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(`[useCachedData] Error loading ${cacheKey}:`, err);
       if (!isMountedRef.current) return;
-      setError(err.message || '加载失败');
+      setError(getErrorMessage(err));
       const cached = globalCache.get(cacheKey);
       if (cached) { setData(cached.data); setLastUpdated(cached.timestamp); }
     } finally { if (isMountedRef.current) setIsLoading(false); isLoadingRef.current = false; }
@@ -143,7 +143,7 @@ export function useEdgeFunctionStatus() {
         console.log(`[Edge Function] Deploy verify:`, { status: data.status, version: data.version, hash: data.deployHash, db: data.summary?.databaseConnected ? 'OK' : 'FAIL', latency: `${data.totalLatencyMs}ms`, mode: data.checks?.routing?.mode || 'unknown' });
         return data;
       }
-    } catch (err: any) { console.warn('[Edge Function] Deploy verify failed:', err.message); }
+    } catch (err: unknown) { console.warn('[Edge Function] Deploy verify failed:', getErrorMessage(err)); }
     finally { setIsVerifying(false); }
     return null;
   }, []);
@@ -175,13 +175,17 @@ export function useEdgeFunctionStatus() {
         setIsConnected(false);
         if (consecutiveFailures.current >= maxConsecutiveFailures) setShowError(true); else scheduleRetry();
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       consecutiveFailures.current++;
       if (consecutiveFailures.current <= 4) {
         const elapsed = Math.round((Date.now() - startTimeRef.current) / 1000);
-        if (error.name === 'AbortError') console.warn(`[Edge Function] Timeout (attempt ${consecutiveFailures.current}, ${elapsed}s) - cold start may take 15-30s`);
-        else if (error.message === 'Failed to fetch') console.warn(`[Edge Function] Network failed (attempt ${consecutiveFailures.current}, ${elapsed}s) - will auto-retry`);
-        else console.error(`[Edge Function] Error (attempt ${consecutiveFailures.current}, ${elapsed}s):`, error.message);
+        // v6.0.141: first 2 attempts use console.log (cold-start is expected), escalate to warn on attempt 3+
+        const logFn = consecutiveFailures.current <= 2 ? console.log : console.warn;
+        const errName = error instanceof Error ? error.name : '';
+        const errMsg = error instanceof Error ? error.message : String(error);
+        if (errName === 'AbortError') logFn(`[Edge Function] Timeout (attempt ${consecutiveFailures.current}, ${elapsed}s) - cold start may take 15-30s, auto-retrying...`);
+        else if (errMsg === 'Failed to fetch') logFn(`[Edge Function] Waking up (attempt ${consecutiveFailures.current}, ${elapsed}s) - Edge Function cold start, auto-retrying...`);
+        else console.error(`[Edge Function] Error (attempt ${consecutiveFailures.current}, ${elapsed}s):`, errMsg);
       }
       setIsConnected(false);
       if (consecutiveFailures.current >= maxConsecutiveFailures) setShowError(true); else scheduleRetry();
@@ -190,7 +194,8 @@ export function useEdgeFunctionStatus() {
 
   const scheduleRetry = () => {
     if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
-    const delays = [3000, 4000, 6000, 8000, 10000, 12000, 15000, 20000];
+    // v6.0.141: faster first retry (1.5s) — Edge Function may be ready quickly after cold start
+    const delays = [1500, 3000, 5000, 8000, 10000, 12000, 15000, 20000];
     const delay = delays[Math.min(consecutiveFailures.current - 1, delays.length - 1)] || 20000;
     retryTimeoutRef.current = setTimeout(() => { checkConnection(); }, delay);
   };
@@ -215,9 +220,9 @@ export function useFullscreen(containerRef: React.RefObject<HTMLDivElement>) {
 
   useEffect(() => {
     const elem = document.createElement('div');
-    const isSupported = !!(elem.requestFullscreen || (elem as any).mozRequestFullScreen || (elem as any).webkitRequestFullscreen || (elem as any).msRequestFullscreen);
+    const isSupported = !!(elem.requestFullscreen || elem.mozRequestFullScreen || elem.webkitRequestFullscreen || elem.msRequestFullscreen);
     try {
-      const test = (document as any).fullscreenEnabled || (document as any).webkitFullscreenEnabled || (document as any).mozFullScreenEnabled || (document as any).msFullscreenEnabled;
+      const test = document.fullscreenEnabled || document.webkitFullscreenEnabled || document.mozFullScreenEnabled || document.msFullscreenEnabled;
       setFullscreenSupported(isSupported && test !== false);
     } catch { setFullscreenSupported(false); }
   }, []);
@@ -231,8 +236,8 @@ export function useFullscreen(containerRef: React.RefObject<HTMLDivElement>) {
 
   useEffect(() => {
     const lockOrientation = async () => {
-      if (isFullscreen && screen.orientation && (screen.orientation as any).lock) { try { await (screen.orientation as any).lock('landscape'); } catch {} }
-      else if (!isFullscreen && screen.orientation && (screen.orientation as any).unlock) { try { (screen.orientation as any).unlock(); } catch {} }
+      if (isFullscreen && screen.orientation && screen.orientation.lock) { try { await screen.orientation.lock('landscape'); } catch {} }
+      else if (!isFullscreen && screen.orientation && screen.orientation.unlock) { try { screen.orientation.unlock(); } catch {} }
     };
     lockOrientation();
   }, [isFullscreen]);
@@ -242,16 +247,16 @@ export function useFullscreen(containerRef: React.RefObject<HTMLDivElement>) {
     try {
       if (!isFullscreen) {
         if (containerRef.current.requestFullscreen) await containerRef.current.requestFullscreen();
-        else if ((containerRef.current as any).mozRequestFullScreen) await (containerRef.current as any).mozRequestFullScreen();
-        else if ((containerRef.current as any).webkitRequestFullscreen) await (containerRef.current as any).webkitRequestFullscreen();
-        else if ((containerRef.current as any).msRequestFullscreen) await (containerRef.current as any).msRequestFullscreen();
+        else if (containerRef.current.mozRequestFullScreen) await containerRef.current.mozRequestFullScreen();
+        else if (containerRef.current.webkitRequestFullscreen) await containerRef.current.webkitRequestFullscreen();
+        else if (containerRef.current.msRequestFullscreen) await containerRef.current.msRequestFullscreen();
       } else {
         if (document.exitFullscreen) await document.exitFullscreen();
-        else if ((document as any).mozCancelFullScreen) await (document as any).mozCancelFullScreen();
-        else if ((document as any).webkitExitFullscreen) await (document as any).webkitExitFullscreen();
-        else if ((document as any).msExitFullscreen) await (document as any).msExitFullscreen();
+        else if (document.mozCancelFullScreen) await document.mozCancelFullScreen();
+        else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+        else if (document.msExitFullscreen) await document.msExitFullscreen();
       }
-    } catch (error) { console.error('全屏切换失败:', error); }
+    } catch (error: unknown) { console.error('全屏切换失败:', error); }
   };
 
   return { isFullscreen, fullscreenSupported, toggleFullscreen };

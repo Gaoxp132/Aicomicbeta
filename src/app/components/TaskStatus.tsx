@@ -196,7 +196,7 @@ function TaskItem({ task, onClick, onTaskCancelled }: TaskItemProps) {
             setStepName(gp.stepName || '');
           }
         }
-      } catch (e) {
+      } catch (e: unknown) {
         // 静默失败，不影响UI
         console.debug('[TaskStatusFloating] Poll error:', e);
       }
@@ -250,7 +250,7 @@ function TaskItem({ task, onClick, onTaskCancelled }: TaskItemProps) {
       case 'completed':
         return '已完成';
       case 'failed':
-        return (task as any).error || '生成失败';
+        return task.error || '生成失败';
       default:
         return '等待中...';
     }

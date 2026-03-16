@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Play, Pause, Volume2, VolumeX, SkipBack, SkipForward, Maximize, Minimize } from 'lucide-react';
-import { apiRequest, formatTime, ASPECT_RATIO_LABELS } from '../utils';
+import { apiRequest, formatTime, ASPECT_RATIO_LABELS, getErrorMessage } from '../utils';
 import { useHlsPlayer } from '../hooks/media';
 
 interface Storyboard {
@@ -98,9 +98,9 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose, a
       } else {
         setError(result.error || '加载失败');
       }
-    } catch (err: any) {
-      console.warn('[EpisodePlayer] Error loading storyboards:', err.message);
-      setError(err.message || '加载失败');
+    } catch (err: unknown) {
+      console.warn('[EpisodePlayer] Error loading storyboards:', getErrorMessage(err));
+      setError(getErrorMessage(err) || '加载失败');
     } finally {
       setIsLoading(false);
     }
@@ -152,7 +152,7 @@ export function EpisodePlayer({ episodeId, episodeTitle, seriesTitle, onClose, a
         await document.exitFullscreen();
         setIsFullscreen(false);
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.warn('[EpisodePlayer] Fullscreen error:', err);
     }
   };

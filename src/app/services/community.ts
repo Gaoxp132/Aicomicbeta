@@ -4,6 +4,7 @@
  */
 
 import { apiPost, apiGet } from '../utils';
+import { getErrorMessage } from '../utils';
 import type { ApiResponse, CommunitySeriesWork } from '../types';
 
 export async function getCommunityWorks(params: {
@@ -22,9 +23,9 @@ export async function getCommunityWorks(params: {
       if (response.data && response.data.works) return response.data;
     }
     return { success: false, works: [], total: 0, error: response.error || '未获取到数据' };
-  } catch (error: any) {
-    const isTimeout = error.name === 'TimeoutError' || error.message?.includes('timeout') || error.message?.includes('timed out');
-    return { success: false, works: [], total: 0, error: isTimeout ? '数据加载超时，请检查网络连接或稍后重试' : error.message };
+  } catch (error: unknown) {
+    const isTimeout = error instanceof Error && (error.name === 'TimeoutError' || error.message?.includes('timeout') || error.message?.includes('timed out'));
+    return { success: false, works: [], total: 0, error: isTimeout ? '数据加载超时，请检查网络连接或稍后重试' : getErrorMessage(error) };
   }
 }
 
@@ -36,8 +37,8 @@ export async function publishToCommunity(data: {
     const response = await apiPost('/community/publish', data);
     if (response.success) return response.data;
     return { success: false, error: response.error || '发布失败' };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -49,9 +50,9 @@ export async function getUserWorks(phone: string, page: number = 1, limit: numbe
       return { success: true, works: response.works || response.data?.works || [], total: response.total || response.data?.total || 0 };
     }
     return { success: false, works: [], total: 0, error: response?.error || 'Failed to fetch user works' };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[getUserWorks] Error:', error);
-    return { success: false, works: [], total: 0, error: error.message };
+    return { success: false, works: [], total: 0, error: getErrorMessage(error) };
   }
 }
 
@@ -60,8 +61,8 @@ export async function incrementViews(workId: string) {
     const response = await apiPost(`/community/works/${workId}/increment-view`);
     if (response.success) return response.data;
     return { success: false, error: response.error };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -70,8 +71,8 @@ export async function incrementShares(workId: string) {
     const response = await apiPost(`/community/works/${workId}/share`);
     if (response.success) return response.data;
     return { success: false, error: response.error };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -82,7 +83,7 @@ export async function refreshVideoUrl(workId: string) {
       if (response.success && response.data) {
         return { success: true, videoUrl: response.data.videoUrl, thumbnailUrl: response.data.thumbnailUrl };
       }
-    } catch (_newRouteError: any) { /* fallback */ }
+    } catch (_newRouteError: unknown) { /* fallback */ }
     const worksResponse = await apiGet(`/community/works`);
     if (worksResponse.success && worksResponse.data?.works) {
       const work = worksResponse.data.works.find((w: any) => w.id === workId);
@@ -104,9 +105,9 @@ export async function refreshVideoUrl(workId: string) {
       }
     }
     return { success: false, error: '无法刷新视频URL' };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[refreshVideoUrl] Exception:', error);
-    return { success: false, error: error.message };
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -116,9 +117,9 @@ export async function getTaskStatus(taskIds: string[]) {
     const response = await apiPost('/community/tasks/batch-status', { taskIds });
     if (response.success && response.data) return response.data;
     return { success: false, statuses: [], error: response.error || '获取任务状态失败' };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[getTaskStatus] Error:', error);
-    return { success: false, statuses: [], error: error.message };
+    return { success: false, statuses: [], error: getErrorMessage(error) };
   }
 }
 
@@ -127,9 +128,9 @@ export async function retryVideo(taskId: string) {
     const response = await apiPost(`/volcengine/retry/${taskId}`, {});
     if (response.success && response.data) return { success: true, newTaskId: response.data.task_id };
     return { success: false, error: response.error || '重新生成失败' };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[retryVideo] Error:', error);
-    return { success: false, error: error.message };
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -137,7 +138,7 @@ export async function getUserProfile(userPhone: string) {
   try {
     const response = await apiGet(`/user/profile/${userPhone}`);
     if (response && response.success) {
-      const user = (response as any).user || response.data;
+      const user = response.user || response.data;
       return {
         success: true,
         user: {
@@ -148,8 +149,8 @@ export async function getUserProfile(userPhone: string) {
       };
     }
     return { success: false, error: response?.error || 'Failed to fetch user profile' };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -158,8 +159,8 @@ export async function toggleLike(userPhone: string, workId: string) {
     const response = await apiPost(`/community/works/${workId}/like`, { userPhone });
     if (response.success) return response.data;
     return { success: false, error: response.error || '点赞操作失败' };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -174,8 +175,8 @@ export async function getLikeStatus(workId: string, userPhone: string) {
       };
     }
     return { success: false, isLiked: false, likes: 0, error: response?.error || 'Failed to fetch like status' };
-  } catch (error: any) {
-    return { success: false, isLiked: false, likes: 0, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, isLiked: false, likes: 0, error: getErrorMessage(error) };
   }
 }
 
@@ -184,8 +185,8 @@ export async function getComments(workId: string, page: number = 1, limit: numbe
     const response = await apiGet(`/community/works/${workId}/comments?page=${page}&limit=${limit}`);
     if (response.success) return response.data;
     return { success: false, comments: [], error: response.error };
-  } catch (error: any) {
-    return { success: false, comments: [], error: error.message };
+  } catch (error: unknown) {
+    return { success: false, comments: [], error: getErrorMessage(error) };
   }
 }
 
@@ -194,8 +195,8 @@ export async function addComment(userPhone: string, workId: string, content: str
     const response = await apiPost(`/community/works/${workId}/comments`, { userPhone, content });
     if (response.success) return response.data;
     return { success: false, error: response.error || '添加评论失败' };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -221,15 +222,15 @@ export async function getCommunitySeries(params: {
     if (response.success) {
       return {
         success: true, data: response.data || [],
-        total: (response as any).total || response.data?.length || 0,
-        page: (response as any).page || params.page || 1,
-        limit: (response as any).limit || params.limit || 20,
-        hasMore: (response as any).hasMore || false,
+        total: response.total || response.data?.length || 0,
+        page: response.page || params.page || 1,
+        limit: response.limit || params.limit || 20,
+        hasMore: response.hasMore || false,
       };
     }
     return { ...defaultResult, error: response.error || '加载失败' };
-  } catch (error: any) {
-    return { ...defaultResult, error: error.message || '加载失败' };
+  } catch (error: unknown) {
+    return { ...defaultResult, error: getErrorMessage(error) || '加载失败' };
   }
 }
 
@@ -239,24 +240,24 @@ export async function getSeriesDetail(seriesId: string, userPhone?: string): Pro
     const response = await apiGet(`/community/series/${seriesId}${queryParams}`, { timeout: 30000, maxRetries: 2 });
     if (response.success) return { success: true, data: response.data };
     return { success: false, error: response.error || '获取详情失败' };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
-export async function likeSeries(seriesId: string, userPhone: string): Promise<any> {
+export async function likeSeries(seriesId: string, userPhone: string): Promise<{ success: boolean; isLiked?: boolean; likes?: number; error?: string }> {
   try {
     const response = await apiPost(`/community/works/${seriesId}/like`, { userPhone });
     if (response.success) {
       return {
         success: true,
-        isLiked: (response as any).isLiked ?? response.data?.isLiked ?? true,
-        likes: (response as any).likes ?? response.data?.likes ?? 0,
+        isLiked: response.isLiked ?? response.data?.isLiked ?? true,
+        likes: response.likes ?? response.data?.likes ?? 0,
       };
     }
     return { success: false, error: response.error || '点赞失败' };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -264,18 +265,18 @@ export async function commentSeries(seriesId: string, userPhone: string, content
   try {
     const response = await apiPost(`/community/works/${seriesId}/comments`, { userPhone, content, parentId });
     return response;
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
-export async function getSeriesComments(seriesId: string, page: number = 1, limit: number = 20): Promise<any> {
+export async function getSeriesComments(seriesId: string, page: number = 1, limit: number = 20): Promise<{ success: boolean; data: any[]; error?: string }> {
   try {
     const response = await apiGet(`/community/works/${seriesId}/comments?page=${page}&limit=${limit}`, { silent: true });
-    if (response.success) return { success: true, data: response.data || (response as any).comments || [] };
+    if (response.success) return { success: true, data: response.data || response.comments || [] };
     return { success: false, data: [], error: response.error };
-  } catch (error: any) {
-    return { success: false, data: [], error: error.message };
+  } catch (error: unknown) {
+    return { success: false, data: [], error: getErrorMessage(error) };
   }
 }
 
@@ -283,7 +284,7 @@ export async function shareSeries(seriesId: string, userPhone?: string, platform
   try {
     await apiPost(`/series/${seriesId}/share`, { userPhone, platform });
     return { success: true };
-  } catch (_error: any) {
+  } catch (_error: unknown) {
     return { success: true }; // Non-critical
   }
 }
@@ -306,8 +307,8 @@ export async function updateViewingHistory(data: {
       userPhone: data.userPhone, lastEpisode: data.episodeNumber || 1, progress: data.lastPosition || 0,
     }, { silent: true });
     return response;
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -316,7 +317,7 @@ export async function updateUserProfile(userPhone: string, data: { nickname?: st
     const response = await apiPost(`/user/profile/${userPhone}`, data);
     if (response.success) return { success: true };
     return { success: false, error: response.error || '更新失败' };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }

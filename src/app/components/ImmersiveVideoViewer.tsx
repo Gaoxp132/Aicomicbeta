@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import * as communityAPI from '../services';
 import { VideoPlayer, InteractionBar, CommentSection, useImmersiveSharing, useImmersiveNavigation } from './immersive';
 import { useFullscreen, useLike, useComments, useVideoPlayer } from '../hooks';
-import { apiPost, ASPECT_RATIO_LABELS } from '../utils';
+import { apiPost, ASPECT_RATIO_LABELS, getErrorMessage } from '../utils';
 
 interface ImmersiveVideoViewerProps {
   work: any;
@@ -188,9 +188,9 @@ export function ImmersiveVideoViewer({ work, allWorks, userPhone, onClose, onWor
       } else {
         toast.error(result.error || '恢复失败，请重新生成视频');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[ImmersiveVideoViewer] Refresh failed:', err);
-      toast.error('恢复失败: ' + (err.message || '未知错误'));
+      toast.error('恢复失败: ' + getErrorMessage(err));
     } finally {
       setIsLoadingVideo(false);
     }

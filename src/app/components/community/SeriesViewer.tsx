@@ -161,7 +161,7 @@ export function SeriesViewer({ series, userPhone, onClose, onNavigateToSeries }:
           setSimilarSeries(res.data);
         }
       })
-      .catch(err => console.warn('[SeriesViewer] Failed to fetch similar:', err.message))
+      .catch((err: unknown) => console.warn('[SeriesViewer] Failed to fetch similar:', err instanceof Error ? err.message : err))
       .finally(() => setIsLoadingSimilar(false));
   }, [showSeriesFinale, series.id]);
 

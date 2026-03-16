@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, CreditCard, CheckCircle2, AlertCircle, QrCode } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiPost, apiGet } from '../utils';
+import { getErrorMessage } from '../utils';
 
 interface PaymentDialogProps {
   isOpen: boolean;
@@ -35,7 +36,7 @@ export function PaymentDialog({ isOpen, onClose, userPhone, quotaInfo, onPayment
   useEffect(() => {
     if (!isOpen) return;
     apiGet('/admin/wechat-qr').then(r => {
-      if (r.success && (r.data as any)?.url) setQrUrl((r.data as any).url);
+      if (r.success && r.data?.url) setQrUrl(r.data.url);
     }).catch(() => {});
   }, [isOpen]);
 
@@ -64,8 +65,9 @@ export function PaymentDialog({ isOpen, onClose, userPhone, quotaInfo, onPayment
       } else {
         toast.error(result.error || '记录付款失败，请重试');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast.error('网络错误，请稍后重试');
+      console.error('[PaymentDialog] Purchase error:', getErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }

@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Button, Input, Textarea, Badge, Card } from '../ui';
 import type { Series, Chapter, Episode } from '../../types';
 import { SeriesFixTool } from './HealthWidgets';
+import { ConfirmDialog, useConfirm } from './ConfirmDialog';
 
 // ── SeriesFixTool extracted to HealthWidgets.tsx (v6.0.88) ────────
 
@@ -19,6 +20,7 @@ export function ChapterManager({ series, onChaptersUpdate, onEpisodeSelect, onRe
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
   const [editingChapter, setEditingChapter] = useState<Chapter | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const { confirm: confirmAction, dialogProps } = useConfirm();
 
   const chapters = series.chapters || [];
   const episodes = series.episodes || [];
@@ -44,10 +46,17 @@ export function ChapterManager({ series, onChaptersUpdate, onEpisodeSelect, onRe
   };
 
   // 自动生成章节（智能划分）
-  const handleAutoGenerateChapters = useCallback(() => {
+  const handleAutoGenerateChapters = useCallback(async () => {
     if (chapters.length > 0) {
-      const confirm = window.confirm('已存在章节，是否重新生成章节划分？这将覆盖现有章节。');
-      if (!confirm) return;
+      const confirmed = await confirmAction({
+        title: '覆盖现有章节',
+        description: '已存在章节，是否重新生成章节划分？这将覆盖现有章节。',
+        confirmText: '重新生成',
+        cancelText: '取消',
+        variant: 'warning',
+        icon: 'regenerate',
+      });
+      if (!confirmed) return;
     }
 
     const newChapters: Chapter[] = [];
@@ -119,10 +128,16 @@ export function ChapterManager({ series, onChaptersUpdate, onEpisodeSelect, onRe
   };
 
   // 删除章节
-  const handleDeleteChapter = (chapterId: string) => {
-    if (!window.confirm('确定要删除这个章节吗？这不会删除其中的剧集。')) {
-      return;
-    }
+  const handleDeleteChapter = async (chapterId: string) => {
+    const confirmed = await confirmAction({
+      title: '删除章节',
+      description: '确定要删除这个章节吗？这不会删除其中的剧集。',
+      confirmText: '确认删除',
+      cancelText: '取消',
+      variant: 'danger',
+      icon: 'delete',
+    });
+    if (!confirmed) return;
 
     onChaptersUpdate(chapters.filter(c => c.id !== chapterId));
     toast.success('章节已删除');
@@ -358,6 +373,7 @@ export function ChapterManager({ series, onChaptersUpdate, onEpisodeSelect, onRe
           />
         )}
       </div>
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }

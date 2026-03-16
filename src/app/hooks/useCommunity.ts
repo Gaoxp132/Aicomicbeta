@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-import { markNetworkSuccess, convertWorkToComic, shareContent } from '../utils';
+import { markNetworkSuccess, convertWorkToComic, shareContent, getErrorMessage } from '../utils';
 import * as communityAPI from '../services';
 import type { Comic, CommunitySeriesWork } from '../types';
 
@@ -24,14 +24,14 @@ export function useComments(workId: string, userPhone?: string) {
   const loadComments = async () => {
     setIsLoadingComments(true);
     try { const result = await communityAPI.getComments(workId); setComments(result.comments || []); }
-    catch (error) { console.error('[useComments] Failed to load comments:', error); }
+    catch (error: unknown) { console.error('[useComments] Failed to load comments:', error); }
     finally { setIsLoadingComments(false); }
   };
 
   const handleComment = async () => {
     if (!userPhone || !commentText.trim()) return;
     try { await communityAPI.addComment(userPhone, workId, commentText); setCommentText(''); loadComments(); }
-    catch (error) { console.error('[useComments] Comment failed:', error); }
+    catch (error: unknown) { console.error('[useComments] Comment failed:', error); }
   };
 
   const toggleComments = () => { setShowComments(!showComments); };
@@ -82,7 +82,7 @@ export function useCommunityWorks({ selectedCategory, sortBy, searchQuery, userP
         loadInteractions(validWorks);
         if (validWorks.length > 0) setLastLoadTime(new Date(validWorks[0].created_at));
       }
-    } catch (error: any) { console.error('[useCommunityWorks] Failed to refresh new works:', error); }
+    } catch (error: unknown) { console.error('[useCommunityWorks] Failed to refresh new works:', error); }
     finally { setIsRefreshing(false); }
   };
 
@@ -96,9 +96,9 @@ export function useCommunityWorks({ selectedCategory, sortBy, searchQuery, userP
         setWorks(uniqueWorks); setPage(1); setHasMore(result.hasMore); setError(null); setRetryCount(0);
         loadInteractions(uniqueWorks);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[useCommunityWorks] Failed to load community works:', error);
-      const errorMessage = error.name === 'NetworkError' ? error.message : error.name === 'TimeoutError' ? error.message : '加载社区作品失败，请稍后重试';
+      const errorMessage = error instanceof Error && error.name === 'NetworkError' ? error.message : error instanceof Error && error.name === 'TimeoutError' ? error.message : '加载社区作品失败，请稍后重试';
       setError(errorMessage);
       if (retryCount < 2 && !isRetry) { setRetryCount(prev => prev + 1); setTimeout(() => loadWorks(true), 3000); }
     } finally { setIsLoading(false); setHasInitialLoad(true); setLastLoadTime(new Date()); }
@@ -115,7 +115,7 @@ export function useCommunityWorks({ selectedCategory, sortBy, searchQuery, userP
         if (validWorks.length < 50) setHasMore(false);
         setPage(prev => prev + 1);
       }
-    } catch (error) { console.error('[useCommunityWorks] Failed to load more community works:', error); }
+    } catch (error: unknown) { console.error('[useCommunityWorks] Failed to load more community works:', error); }
     finally { setIsLoadingMore(false); }
   };
 
@@ -127,7 +127,7 @@ export function useCommunityWorks({ selectedCategory, sortBy, searchQuery, userP
 
 // ═══════════════════════════════════════════════════════════════════
 // [5] useCommunityInteractions
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════���═══════════════════
 
 interface UseCommunityInteractionsProps { userPhone?: string; onSelectComic: (comic: Comic, comicsList?: Comic[]) => void; }
 
@@ -138,7 +138,7 @@ export function useCommunityInteractions({ userPhone, onSelectComic }: UseCommun
     try {
       const result = await communityAPI.toggleLike(userPhone, workId);
       if (result.success) { setInteractions(prev => { const m = new Map(prev); const c = m.get(workId); if (c) m.set(workId, { ...c, isLiked: result.isLiked, likes: result.likes }); return m; }); }
-    } catch (error) { console.error('Failed to toggle like:', error); }
+    } catch (error: unknown) { console.error('Failed to toggle like:', error); }
   };
 
   const handleComment = (work: any, works: any[], e: React.MouseEvent) => { e.stopPropagation(); handleWorkClick(work, works); };
@@ -153,7 +153,7 @@ export function useCommunityInteractions({ userPhone, onSelectComic }: UseCommun
     try {
       await communityAPI.incrementShares(workId);
       setInteractions(prev => { const m = new Map(prev); const c = m.get(workId); if (c) m.set(workId, { ...c, shares: c.shares + 1 }); return m; });
-    } catch (error) { console.error('Failed to increment share count:', error); }
+    } catch (error: unknown) { console.error('Failed to increment share count:', error); }
   };
 
   const handleWorkClick = (work: any, works: any[]) => {
@@ -203,9 +203,10 @@ export function useCommunitySeries({ selectedCategory, sortBy, searchQuery, user
         if (result.error && !result.error.includes('Failed to fetch')) setError(result.error);
         else { setSeries([]); setError(null); }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[useCommunitySeries] Load error:', err);
-      if (err.message?.includes('Failed to fetch')) { setSeries([]); setError(null); } else setError(err.message || '加载漫剧系列失败');
+      const errMsg = getErrorMessage(err);
+      if (errMsg.includes('Failed to fetch')) { setSeries([]); setError(null); } else setError(errMsg || '加载漫剧系列失败');
     } finally { setIsLoading(false); setIsLoadingMore(false); }
   };
 
@@ -221,7 +222,7 @@ export function useCommunitySeries({ selectedCategory, sortBy, searchQuery, user
         return { hasNew: result.data.length > 0, count: result.data.length };
       }
       return { hasNew: false, count: 0 };
-    } catch (err: any) { console.error('[useCommunitySeries] Refresh error:', err); return { hasNew: false, count: 0 }; }
+    } catch (err: unknown) { console.error('[useCommunitySeries] Refresh error:', err); return { hasNew: false, count: 0 }; }
     finally { setIsPullingToRefresh(false); }
   }, [selectedCategory, sortBy, searchQuery, userPhone]);
 
@@ -254,13 +255,13 @@ export function useLike(workId: string, userPhone?: string) {
   const loadLikeStatus = async () => {
     if (!userPhone) return;
     try { const result = await communityAPI.getLikeStatus(workId, userPhone); if (result.success) { setIsLiked(result.isLiked); setLikes(result.likes); } }
-    catch (error) { console.error('加载点赞状态失败:', error); }
+    catch (error: unknown) { console.error('加载点赞状态失败:', error); }
   };
 
   const handleLike = async () => {
     if (!userPhone) return;
     try { const result = await communityAPI.toggleLike(userPhone, workId); setIsLiked(result.isLiked); setLikes(result.likes); }
-    catch (error: any) { console.error('[useLike] Like operation failed:', error); }
+    catch (error: unknown) { console.error('[useLike] Like operation failed:', error); }
   };
 
   return { isLiked, likes, handleLike, loadLikeStatus };

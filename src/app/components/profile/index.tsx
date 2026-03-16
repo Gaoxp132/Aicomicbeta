@@ -19,6 +19,8 @@ import { apiDelete } from '../../utils';
 import { retryVideo } from '../../services';
 import type { Comic } from '../../types/index';
 import type { VideoQuotaInfo } from '../../hooks/useVideoQuota';
+import { ConfirmDialog, useConfirm } from '../series/ConfirmDialog';
+import { getErrorMessage } from '../../utils';
 
 // ═══════════════════════════════════════════════════════════════════
 // [A] ProfileHeader (was: ProfileHeader.tsx)
@@ -43,7 +45,7 @@ export function ProfileHeader({ userPhone, userNickname, onNicknameChange, onLog
     try {
       const result = await communityAPI.updateUserProfile(userPhone, { nickname: editNicknameValue.trim() });
       if (result.success) { onNicknameChange(editNicknameValue.trim()); setIsEditingNickname(false); }
-    } catch (error) { console.error('[ProfileHeader] Failed to update nickname:', error); }
+    } catch (error: unknown) { console.error('[ProfileHeader] Failed to update nickname:', error); }
     finally { setIsSavingNickname(false); }
   };
   const handleCancelEdit = () => { setIsEditingNickname(false); setEditNicknameValue(''); };
@@ -112,10 +114,19 @@ interface ProfileWorkItemProps { work: any; onPlay: () => void; onRefresh: () =>
 export function ProfileWorkItem({ work, onPlay, onRefresh }: ProfileWorkItemProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const { confirm: confirmAction, dialogProps } = useConfirm();
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('确定要删除这个作品吗？')) return;
+    const confirmed = await confirmAction({
+      title: '删除作品',
+      description: '确定要删除这个作品吗？',
+      confirmText: '确认删除',
+      cancelText: '取消',
+      variant: 'danger',
+      icon: 'delete',
+    });
+    if (!confirmed) return;
     setIsDeleting(true);
     try {
       if (work.type === 'series') { await apiDelete(`/series/${work.id}`); }
@@ -126,7 +137,7 @@ export function ProfileWorkItem({ work, onPlay, onRefresh }: ProfileWorkItemProp
         else { await apiDelete(`/series/${work.id}`); }
       }
       toast.success('作品已删除'); onRefresh();
-    } catch (error) { console.error('[ProfileWorkItem] Failed to delete work:', error); toast.error('删除失败，请重试'); }
+    } catch (error: unknown) { console.error('[ProfileWorkItem] Failed to delete work:', error); toast.error('删除失败，请重试'); }
     finally { setIsDeleting(false); }
   };
 
@@ -138,7 +149,7 @@ export function ProfileWorkItem({ work, onPlay, onRefresh }: ProfileWorkItemProp
       const result = await retryVideo(work.taskId);
       if (result.success) { toast.success('重新生成已启动，请稍后刷新查看'); setTimeout(() => onRefresh(), 3000); }
       else { toast.error(result.error || '重试失败'); }
-    } catch (error: any) { console.error('[ProfileWorkItem] Failed to retry:', error); toast.error('重试失败：' + error.message); }
+    } catch (error: unknown) { console.error('[ProfileWorkItem] Failed to retry:', error); toast.error('重试失败：' + getErrorMessage(error)); }
     finally { setIsRetrying(false); }
   };
 
@@ -146,13 +157,14 @@ export function ProfileWorkItem({ work, onPlay, onRefresh }: ProfileWorkItemProp
     switch (work.status) {
       case 'completed': return <span className="px-2 py-1 bg-green-500/20 text-green-300 text-xs rounded-full border border-green-500/30">✓ 已完成</span>;
       case 'processing': return <span className="px-2 py-1 bg-blue-500/20 text-blue-300 text-xs rounded-full border border-blue-500/30 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />生成中</span>;
-      case 'pending': return <span className="px-2 py-1 bg-yellow-500/20 text-yellow-300 text-xs rounded-full border border-yellow-500/30">⏳ 排队中</span>;
+      case 'pending': return <span className="px-2 py-1 bg-yellow-500/20 text-yellow-300 text-xs rounded-full border border-yellow-500/30">⏳ 排队</span>;
       case 'failed': return <span className="px-2 py-1 bg-red-500/20 text-red-300 text-xs rounded-full border border-red-500/30">✗ 失败</span>;
       default: return <span className="px-2 py-1 bg-gray-500/20 text-gray-300 text-xs rounded-full border border-gray-500/30">{work.status || '草稿'}</span>;
     }
   };
 
   return (
+    <>
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} whileHover={{ scale: 1.02 }} className="bg-white/5 rounded-xl p-3 sm:p-4 backdrop-blur-sm border border-white/10 hover:bg-white/10 transition-all cursor-pointer group" onClick={onPlay}>
       <div className="flex items-center gap-3 sm:gap-4">
         <div className="relative w-16 h-16 sm:w-24 sm:h-24 rounded-lg bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center overflow-hidden flex-shrink-0">
@@ -174,6 +186,8 @@ export function ProfileWorkItem({ work, onPlay, onRefresh }: ProfileWorkItemProp
         </div>
       </div>
     </motion.div>
+    <ConfirmDialog {...dialogProps} />
+    </>
   );
 }
 

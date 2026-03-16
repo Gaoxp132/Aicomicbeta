@@ -10,6 +10,7 @@ import type { CategoryType, SortType } from './community/widgets';
 import { SeriesViewer } from './community/SeriesViewer';
 import { useCommunityWorks, useCommunitySeries, useCommunityInteractions } from '../hooks';
 import type { CommunitySeriesWork, Comic } from '../types';
+import { getErrorMessage } from '../utils';
 
 interface CommunityPanelProps {
   onSelectComic: (comic: Comic, comicsList?: Comic[]) => void;
@@ -97,9 +98,9 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
       } else {
         toast.error('无法加载漫剧详情');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[CommunityPanel] Series detail error:', error);
-      toast.error('加载失败，请稍后重试');
+      toast.error('加载系列详情失败: ' + getErrorMessage(error));
     }
   };
 
@@ -113,9 +114,9 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
       } else {
         toast.error('无法加载推荐作品');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[CommunityPanel] Navigate to series error:', error);
-      toast.error('加载推荐作品失败');
+      toast.error('操作失败: ' + getErrorMessage(error));
     }
   };
 
@@ -149,7 +150,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
       } else {
         toast.error(result.error || '操作失败');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[CommunityPanel] Series like error:', error);
       toast.error('点赞失败，请稍后重试');
     }
@@ -207,7 +208,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
         }
         return newMap;
       });
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('[CommunityPanel] Series share count error:', error);
     }
   };

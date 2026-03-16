@@ -7,3 +7,4 @@
 export * from './useInfra';
 export * from './useCommunity';
 export * from './useVideoQuota';
+export * from './useAdminCheck';

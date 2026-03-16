@@ -1,372 +1,10 @@
 /**
- * Hono 服务器应用 - 模块化版本
- * v6.0.132: video-proxy三层修复——timeout 30s→60s + DB fallback扩展到所有URL(不再限TOS) + bulk-refresh OSS URL HEAD验证
- *           根因: OSS URL(aliyuncs.com)也会超时，但canFallback仅对TOS生效→OSS超时无自愈
- *           修复1: handleVideoProxy upstream timeout 30s→60s（大视频+跨区下载需更长时间）
- *           修复2: canFallback从 isTosUrl&&hasContext 改为 hasContext（所有URL均可DB fallback）
- *           修复3: tryDbFallback对timeout场景允许重试同URL（超时可能是瞬态网络问题）
- *           修复4: bulk-refresh OSS URL从盲目passthrough改为HEAD验证+DB fallback
- *           修复5: 客户端proxy timeout 45s→75s + direct timeout 30s→60s
- * v6.0.131: OSS转存await-with-timeout——volcengine/status完成回调中OSS转存改为await+12s超时，成功则直接返回OSS URL，超时则返回原始URL(后台继续)
- *           + transfer-completed-to-oss增强——HEAD检查跳过已过期TOS URL + 可选seriesId过滤 + limit提升50
- *           + 前端StoryboardEditor合并错误UI增强——过期场景显示"重新生成视频"按钮
- * v6.0.130: video-proxy timeout也触发DB fallback + video_tasks JSONB过滤优化 + bulk-refresh IRRECOVERABLE_SOURCES收窄
- * v6.0.129: video-proxy DB fallback——TOS 403时自动查DB获取已转存的OSS URL + bulk-refresh跳过futile sync transfer
- * v6.0.126: 已合并集视频持久化到OSS——客户端合并完成后直传OSS+DB持久化，下次可直接下载
- * v6.0.125: 修复 clientMergeEpisode Proxy upstream 403（OSS签名URL过期）——合并前批量刷新签名
- * v6.0.124: useSeries轮询并发限制修复(2→5) + SeriesCard卡住任务自动重试倒计时
- * v6.0.123: 入口文件VERSION字符串同步(v6.0.77→v6.0.123) + 移除App.tsx DIAG模块预检日志块
- * v6.0.122: 修复 "send was called before connect"——onError检测Deno TCP断连错误并静默忽略，防止错误递归
- * v6.0.121: 合并分镜完整性修复——包容所有分辨率段不跳过 + vite.config.ts路径优化
- * v6.0.120: StyleAnchorPanel增强——无锚定态场景选择+分集分组+批量生成后锚定建议
- * v6.0.119: 风格锚定图管理面板——SeriesEditor可视化查看/更换/清除anchor + PUT handler安全合并styleAnchorImageUrl到coherence_check JSONB
- * v6.0.118: 全自动i2v风格链——参考图→E1S1.image_url预���→storyboard.image_url自动升级→anchor两阶段锚定(user-upload→首生成场景自动替换)
- * v6.0.117: 参考�����风格锚定(referenceImageUrl同时设为styleAnchorImageUrl,创建时即生效) + 移除确定性seed(Seedance API不支持)
- * v6.0.116: 风格一致性三重锁定: 确定性seed(seriesId→稳定整数) + 风格锚定图(首场景→styleAnchorImageUrl→后续无前序图时i2v回退) + 首帧提示注入(防电话游戏风格漂移)
- * v6.0.115: 重试永远不生效修复(forceRetry绕过幂等性守卫) + 风格一致性增强(指南截断500→1000+风格DNA锁定+分镜retry用sbPromptFixed)
- * v6.0.114: video-proxy POST handler——避免GET query string超长导致浏览器Failed to fetch + 客户端重试增强(4次+渐进退避)
- * v6.0.113: framer-motion缺失修复——vite.config.ts resolve.alias + package.json显式依赖，恢复全部28个motion/react导入点
- * v6.0.112: Unicode乱码彻底清除——覆盖修正策略修复11处无法直接匹配的U+FFFD残留(sbPrompt2/extraCtx/tpls/charPromptLines/epGenPromptLines/sbPrompt/characterRows/syn)
- * v6.0.111: 分辨率不一致自动修复(excludedScenes→forceRegenerate→重新合并) + CORS allowHeaders补充apikey(修复video-proxy 100%失败) + preferredResolution客户端支持
- * v6.0.110: 客户端视频下载三重故障修复(proxy-first策略反转+双端AbortController超时+场景号追踪) + video-proxy上游30s超时防挂起+504响应
- * v6.0.109: 批量合并分辨率多数派漂移修复(全局预过滤+getVideoResolution) — concatMP4 per-batch过滤导致intermediate被误排除
- * v6.0.108: ClientVideoMerger客户端合并下载HTTP401修复(三级下载策略: 直接下载OSS→代理下载+双重认证头→跳过) + MP4分辨率不匹配宽容合并(排除异分辨率段继续拼接)
- * v6.0.107: useEpisodeActions完整重建(fast_apply_tool截断修复) + handleMergeVideos skippedEpisodes本地合并自动触发
- * v6.0.106: merge-all-videos OOM防御(per-episode >6分镜跳过服务端+skippedEpisodes信号) + 死依赖清理(FFmpeg.wasm/tw-animate-css)
- * v6.0.105: 视频合并OOM多层防御(merge-videos提前路由useClientMerge+前端智能跳过+纯TS MP4 concat替换FFmpeg.wasm)
- * v6.0.104: 生成心跳机制增强(批次级+重试+对话润色三处心跳) + 前端卡住检测修复(函数名冲突+双信号追踪+阈值调优)
- * v6.0.103: 画面风格一致性增强(视觉风格指南全量注入+���格DNA锚点) + 生成卡住前端自愈
- * v6.0.102: 管理员付款推送通知(GET /admin/pending-count + useAdminPaymentPoller + Header角标)
- * v6.0.101: 视频合并无感化(StoryboardEditor自动合并+智能下载按钮，服务器→FFmpeg本地回退)
- * v6.0.100: 管理员无限配额修复(AdminPanel用户列表isAdmin标记+后端freeLimit=-1)
- * v6.0.99: 客户端本地视频合并(FFmpeg.wasm)+服务器轻量代理(/video-proxy)
- * v6.0.98: ProfilePanel配额卡片+useVideoQuota hook+StoryboardEditor配额徽章+移动端管理员入口
- * v6.0.97: 配额超限事件总线+PaymentDialog/AdminPanel集成+Header管理入口
- *          - 后端: import { ADMIN_PHONE } from constants.ts（之前ADMIN_PHONE为app.tsx局部常量）
- *          - 前端: utils/events.ts事件总线+PaymentDialog/AdminPanel挂载到App.tsx
- * v6.0.96: 每日配额+管理员面板+Toast修复+合并WORKER_LIMIT修复
- * v6.0.95: Volcengine偶发失败前端自动重试+分辨率修复增强
- *          - 修复: [前端] hooks.ts handleBatchGenerate——Volcengine failed场景自动重试1次(间隔10s)
- *                  根因: 批量生成遇到「视频生成失败(状态:failed)」无重试直接标记draft
- *          - 修复: [前端] StoryboardVideoMerger auto-fix——分辨率不一致重新生成时自���重试1次(间隔10s)
- *                  根因: generateStoryboardVideo失败无重试→failedFix增加→fixedCount==0时全部中止
- * v6.0.94: 幂等性窗口3→10min防误判 + generate-full-ai并行进度分段更新
- *          - 修复: generate-full-ai幂等性防护窗口 3分钟→10分钟
- *                  根因: 每批次AI+retry最多需要约3分钟(90s AI+2s+90s retry)
- *                        2集批次连续两批=6分钟无updateProgress → 误判为卡住 → 允许重复提交 → 双进程并发写DB
- *          - 修复: generate-full-ai并行完成后补充Step2进度更新(原Step1+2合并仅一条进度记录)
- * v6.0.93: 视频合并分辨率修复+生成进度跨导航保持+并行生成优化
- *          - 关键修复: mp4concat.ts新增preferredResolution选项修复majority-vote选错分辨率根因
- *          - 关键修复: merge-videos路由查询coherence_check.aspectRatio→ASPECT_TO_RESOLUTION映射→传给concatMP4
- *          - 关键修复: StoryboardVideoMerger部分修复失败时继续合并(fixedCount>0即可)而非全部中止
- *          - 功能: 分镜video生成状态DB持久化(generating)→跨导航进度保持→5秒轮询更新完成状态
- *          - 前端: useStoryboardBatchGeneration/handleGenerate/handleRegenerateVideo均PATCH generating到DB
- * v6.0.92: 画面比例专属构图强制指令——修复竖屏/方屏下角色主体不在主画面的问题
- *          - 根本原因: Seedance模型默认按16:9横屏构图习惯生成，输出竖屏(720×1280)时角色位置偏移至边缘
- *          - 修复: volcengine/generate��由新增ASPECT_FRAMING_DIRECTIVES映射(9:16/1:1/3:4/4:3/16:9)
- *          - 注入位置: prompt最高优先级（styleLock之后第一行），强制模型按尺寸居中对焦主体
- *          - 9:16竖屏指令: 垂直中轴居中+头顶在20%-35%区域+人脸高度≥20%+严禁左右偏移裁切
- *          - 前端: AI生成分镜按钮loading状态+数据提取Bug修复+批量生成currentScene进度+智能生成7阶段定时器
- * v6.0.91: 修复generate-full-ai完成日志未定义变量(ReferenceError导致completed→failed)+路由索引行号校准+注释版本标签修正
- * v6.0.90: series_storyboards无generation_metadata列→移除该字段+generate-full-ai按批次写DB防OOM
- * v6.0.89: Unicode全量修复(137处→0)+死文件/依赖清理
- * v6.0.88: 代码审计重构+hooks拆分+changelog精简+版本号同步
- * v6.0.87: 分镜fallback必达+创建竞态修复+视频重新生成
- *          - 修复: fallback条件从sbAiFallback(需3次连续失败)改为!batchAiSuccess(AI+retry失败即兜底)
- *          - 根因: 2-3批的短剧(3-5集)AI全部失败时前1-2批零分镜，导致新建剧无分镜产出
- *          - 修复: POST /series创建时预设status='generating'消除轮询竞态
- *          - 功能: volcengine/generate新增forceRegenerate参数(跳过去重+清除旧任务+���除旧video_url)
- *          - 修复: 错误处理器stepName '生成异常' Unicode修复
- * v6.0.86: AI对白智能润色+生成质量统计+完成诊断增强
- *          - 后端: 空dialogue场景先用模板保底，再调用AI生成上下文相关对话（最多12场景，30s超时）
- *          - 后端: 生成质量统计(aiSuccess/repaired/retry/fallback批次+dialogue空率+AI润色数)
- *          - 后端: 统计持久化到generation_progress.qualityStats，前端可读���
- *          - 后端: 完成日志包含完整质量摘要(AI:N repair:N retry:N fb:N dlg:Nai/Ntpl/Nempty)
- *          - 后端: API响应体新增qualityStats对象，前端可展示生成报告
- * v6.0.85: 截断JSON恢复+空dialogue自动补填+分镜批次级进度
- *          - 后端: repairTruncatedStoryboardJSON三策略修复被截断的分镜JSON（嵌套提取→扁平提取→括号平衡）
- *          - 后端: generate-full-ai主路径+重试路径均使用JSON修复替代简单JSON.parse
- *          - 后端: generate-storyboards-ai独立分镜路由同步使用JSON修复
- *          - 后端: detectAndFillEmptyDialogues空dialogue自动补填（基于角色名+情感基调+场景位置）
- *          - 后端: generate-full-ai在DB写入前自动检测空dialogue并补填基础对话
- *          - 后端: 分镜批次循环内updateProgress写入批次级进度（第N/M批）到generation_progress
- *          - 前端: 已有轮询机制自动显示"正在生成分镜场景 (第2/5批, 共10集)"级别进度
- * v6.0.84: 自动生成流水线修复——分镜AI超时+角色描述增强+对白必填+视频重试韧性
- *          - 后端: generate-full-ai分镜AI timeout 45s→90s, max_tokens 6000→8000, 批次2集（原3集）
- *          - 后端: sbAiFallback从永久放弃改为单批重试(降temp)+连续3次失败才永久放弃
- *          - 后端: sbAiFallback入口条件修复VOLCENGINE_API_KEY||ALIYUN(原仅检查ALIYUN)
- *          - 后端: sbPrompt提升至try外部修复重试块作用域访问bug
- *          - 后端: 角色description 30-50字→80-120字+personality 10-20字→30-50字+relationships 20-40字
- *          - 后端: 独立角色生成charPromptFixed同步升级(description/personality/relationships)
- *          - 后端: 两处角色DB插入均合并ch.relationships到description字段
- *          - 后端: generate-full-ai+generate-storyboards-ai两路由dialogue强制必填
- *          - 后端: generate-storyboards-ai max_tokens 6000→7000(单集+必填对话增大输出)
- *          - 前端: 视频批量maxRetries 2→3, 间隔5s, 指数退避, 网络容忍5→8, aspectRatio双保险
- * v6.0.83: 社区接口aspectRatio透传+比例标签去重+竖屏卡��高度约束
- * v6.0.82: 全组件aspectRatio贯通+共享比例工具函数
- * v6.0.80: 画面比例信息展示+播放器宽高比自适应+旧剧兼容回退
- *          - 前端: SeriesEditor配置信息条(aspectRatio/resolution/style只读徽章)
- *          - 前端: SeriesCard标签+DetailModal属性网格新增画面比例和分辨率
- *          - 前端: EpisodePlayer根据aspectRatio自适应视频容器约束
- *          - 兼容: 旧剧���aspectRatio字段默认显示"16:9 (默认)"
- * v6.0.79: 视频画面比例选择——5种���例(9:16/16:9/1:1/4:3/3:4)×4种分辨率=20种宽高组合
- *          - 功能: 创建剧时选择画面比例（参考抖音/YouTube/Instagram等主流平台）
- *          - 后端: coherence_check存储aspectRatio，volcengine/generate根据比例×分辨率映射精确宽高
- *          - 强制: 同一部剧全部分镜保持一致画面比例（seriesId+storyboardNumber时从coherence_check读取）
- * v6.0.78: 分镜衔接增强+剧集连贯性+transitionFromPrevious注入+cliffhanger持久化
- *          - 增强: episode行保存cliffhanger/previousEpisodeLink到key_moment META后缀
- *          - 增强: generate-storyboards-ai读取前集cliffhanger+当前集previousEpisodeLink注入prompt
- *          - 增强: volcengine/generate注入当前分镜transitionFromPrevious镜头衔接指令
- *          - 增强: volcengine/generate从前一分镜generation_metadata提取endingVisualState
- *          - 保护: coherence_check更新时spread保留resolution/isPublic等已有字段
- * v6.0.77: H265默认+自动降级+视频时长10s+角色微特征锁定+OSS补传+分辨率统一
- *          - 优化: volcengine/generate默认H265编码（更高画质），API失败时自动降级H264��试
- *          - 优化: 分镜默认时长8s→10s（Seedance 1.5 Pro支持最长12s）
- *          - 强化: 角色面部微特征(痣/疤痕/酒窝)位置锁定——提示词+视觉��格指南+Seedance后缀三层约束
- *          - 修复: volcengine/status已完成但非OSS的URL触发后台补传（修复fire-and-forget静默失败）
- *          - 前端: 移除编码手动选择UI，全自动H265+降级
- * v6.0.76: H265前端编码选择UI+设置中心集成
- * v6.0.75: 修复重复生成(幂等性防护)+视频轮询韧性+H265编码支持
- * v6.0.73: 消除@别名依赖+相对路径迁移根治白屏
- * v6.0.72: 修复sonner-shim toast方法+作品类型选择
- * v6.0.71: 重构审计: CreationProgressOverlay提取+全量死代码/DB调用扫描(零问题)
- * v6.0.70: 作品社区发布开关: 公开/私有切换+社区过滤+创建向导集成
- *          - isPublic存储在coherence_check JSONB内(零DDL), POST/PUT/GET全链路
- *          - 社区列表+相似+详情过滤私有, 创建向导+编辑器Globe/Lock开���
- * v6.0.69: 视频质量全链路优化: 分辨率严格校验+角色一致性+中国审美+反重复
- *          - mp4concat严格模式+SEEDANCE/角色/分镜/大纲全链路增强+前端422解析
- * v6.0.68: 前端极限模块合并: 模块图从77→45（四波合并省32模块）
- * v6.0.65: concatMP4分辨率宽容模式——修复合并丢分镜根因（不再跳过分辨率不一致的段）
- *          - ��因: i2v场景视频可能与t2v场景分辨率不一致，concatMP4 majority-vote静默丢弃minority段
- *          - 修复: concatMP4改为permissive mode——所有段全部包含��不跳过（现代H.264解码器处理流内SPS变更）
- *          - 修复: merge-videos/merge-all添加validSceneNumbers追踪数组，skippedSegments索引→场景号映射
- *          - 新增: StoryboardVideoMerger failedScenes诊断面板+一键重试+前端超时适配
- * v6.0.64: (merged into v6.0.65)
- * v6.0.63: 合并视频修复+跨集衔接+角色对话一致性+路由索引刷新
- *          - 修复: merge-videos/merge-all 并行下载→顺序下载+3次重试（解决分镜丢失/时长不足/8s问题）
- *          - 新增: volcengine/generate 跨集i2v图片注入（scene 1自动用上集末尾图片）
- *          - 新增: volcengine/generate 跨集场景上下文注入（上集末尾描述+对话+情感）
- *          - 增强: volcengine/generate 邻场景对话内容注入（dialogue字��不再被忽略）
- *          - 增强: generate-storyboards-ai 新增第7~8条连贯性约束（对话角色锁定+角色出场追踪）
- *          - 增强: generate-storyboards-ai 新增对话匹配规则（说话者全名+禁幽灵角色）
- *          - 增强: merge-videos响应新增failedScenes/totalStoryboards/downloadedCount字段
- *          - 前端: useStoryboardBatchGeneration强制按sceneNumber排序（保证顺序生成）
- *          - 维护: 路由索引v6.0.63刷新（v6.0.55→v6.0.63漂移+8~78行）
- * v6.0.62: 批量分镜生成实装——前端TODO清零（handleSmartGenerate逐集+网络韧性+进度反馈）
- * v6.0.61: VideoHealthAlert+SeriesVideoHealthChecker组件实现（EpisodeManager两处TODO激活）
- * v6.0.60: 分享功能实装——shareUtils统一分享工具+3处handler完善（SeriesViewer/CommunityPanel/CommunityInteractions）
- * v6.0.59: EpisodeCard prop drilling消除（4工具函数→直接导入）+formatDuration共享化
- * v6.0.58: PlaylistVideoPlayer.handleVideoError DRY重构（reloadAndPlay/updateCurrentVideoUrl/bumpRetry）
- * v6.0.57: Unicode乱码修复(apiClient/useEdgeFunctionStatus) + EdgeFunctionError版本号动态化
- * v6.0.56: EdgeFunctionError迁移至apiClient（re-export getApiUrl/projectId），constants/api导入15→2处终态
- * v6.0.55: 刷新路由索引L~行号（16域[A]-[P]全部校���，v6.0.49以来累积+6行偏移）
- * v6.0.54: apiClient迁移收官——apiUpload新增+3文件9处fetch迁移（ReferenceImageInput/videoMerger/volcengine），constants/api导入15→3处
- * v6.0.53: 4个组件文件7处fetch迁移至apiClient（VideoUrlDiagnostic/PlaylistErrorView/PlaylistVideoPlayer/SeriesViewer）
- * v6.0.52: 5个hooks文件10处手动fetch迁移至apiClient（useWizardAI/useVideoGeneration/useHlsPlayer/usePlaylistLoader/useStoryboardBatchGeneration）
- * v6.0.51: 6文件12处手动fetch迁移至统一apiClient（CharacterManager/SeriesFixTool/useSeriesEditorActions/StoryboardEditor/ImmersiveVideoViewer/LoginDialog）
- * v6.0.50: /utils/supabase/info导入归一至api.ts单一入口、后端9模块版本头同步v6.0.50
- * v6.0.49: aiGenerationService合并入seriesService、getAuthOnlyHeaders统一5文件Authorization、路由索引行号刷新
- * v6.0.48: 前端URL统一化——13文件手工URL迁移至getApiUrl()、generateStoryboardsAI去重迁移
- * v6.0.47: 代码质量优化——volcApiPost工具函数提取、aiEpisodeGenerator迁移apiRequest、路由索引+域分区注释
- * v6.0.46: mp4concat.ts拆分——851行→mp4-parser.ts(353)+mp4-builder.ts(177)+mp4concat.ts(353)
- * v6.0.45: SeriesViewer.tsx拆分——集���useAutoAdvance hook（505行→443行）
- * v6.0.44: 死代码扫描+清理（零功能变更）
- *          - 清理: helpers.ts移除未使用的getCameraMovement()（app.tsx直接用PRO_SHOT_MAP常量）
- *          - 清理: types/index.ts移除未使用的ShotType/CameraMovement类型（仅内部引用,无外部消费者）
- *          - 清理: EpisodePlayer.tsx移除重复的局部formatTime，改用共享utils/formatters导入
- *          - 清理: 后端types.ts移除未使用的AICallResult接口（定义后从未被import）
- *          - 激活: ErrorBoundary.tsx接入App.tsx根组件（全局错误捕获+友好错误界面）
- *          - 标记: 5条后端AI/图像路由(ai/generate-story-enhanced等)前端无调用方,保留为运维/未来用途
- * v6.0.43: app.tsx Unicode乱码修复#5#6（零功能变更）
- *          - 修复: L3937 epGenPromptLines "故事??展"→override变量epGenPromptFixed(.replace修正)
- *          - 修复: L4816 注释 "???使"→添加纠正注释"即使 enrich 失败也使用封面回退"
- * v6.0.42: 重复基础设施代码清理（零功能变更）
- *          - 重构: app.tsx内联基础设施代码替换为模块import（constants/utils/ai-service/oss-service/rate-limiter/helpers）
- *          - 清理: 移除~550行重复定义（常量/AI路由/Supabase客户端/工具函数/OSS函数/速率限制器）
- *          - 修复: 孤儿代码碎片清理（export-mp4 orphaned line）+deploy-verify内联环境变量读取
- * v6.0.41: 后端模块化拆分+模块文件创建（零功能变更）
- *          - 重构: 基础设施代码拆分为7个独立模块文件（types/constants/utils/ai-service/oss-service/rate-limiter/helpers）
- *          - 重构: 模块文件位于同级目录，Supabase Edge Function bundler 正确打包静态导入链
- *          - 优化: 前端immersive/VideoPlayer.tsx拆分（HLS逻辑提取为useHlsPlayer hook）
- * v6.0.40: MP4拼接分辨率majority-vote+thumbnail_url修复
- *          - 修复: series_storyboards.thumbnail_url列不存在——全部select/update移除该列,改用image_url回退
- *          - 修复: MP4拼接分辨率不一致不再hard-fail——改为majority-vote选择主流分辨率,跳过异常段
- *          - 优化: concatMP4返回skippedSegments信息,调用方日志可追踪被跳过的分镜
- * v6.0.39: 合并始终产出MP4+直接下载
- *          - 架构: merge-videos始终产出真实MP4+OSS存储(消灭playlist/inline-json回退)
- *          - 功能: 下载改为前端直接fetch blob(零后端调用)
- *          - 安全: merge-videos增加所有权校验(仅制作者可合并)
- *          - 清理: export-mp4端点废弃(保留兼容桩)
- * v6.0.38: 打包下载MP4+制作者所有权校验
- *          - 功能: POST /episodes/:episodeId/export-mp4 打包下载(MP4拼接+OSS上传+所有权校验)
- *          - 安全: 仅series.user_phone===userPhone的制作者可下载，非制作者返回403
- * v6.0.37: 分镜展示修复+封面修复+视频下载+发现页默认全部
- *          - 修复: 发现页封面缺失——coverFallbackMap增加storyboard thumbnail_url + video_tasks缩略图回退
- *          - 修复: 发现页默认选中"全部"而不是"漫剧系列"
- *          - 修复: community/series/:id 分镜关联episode_number匹配改用Number()防类型不匹配
- *          - 功能: 合并视频下载——MP4直接下载/播放列表逐段下载（含OSS签名+进度提示）
- * v6.0.36: 多作品类型系统+专业视听语言知识库+全链路AI提示词增强
- *          - 功能: PRODUCTION_TYPE_PROMPTS 8种作品类型专业化配置 + PRO_SHOT_MAP景别→运镜指令映射
- *          - 优化: generate-full-ai第10/11条(景别编排+蒙太奇) + generate-storyboards-ai景别知识注入
- *          - 优化: volcengine/generate注入camera_angle的PRO_SHOT_MAP运镜指令 + 标题AI感知作品类型
- *          - 优化: 剧集大纲prompt注入三幕结构/英雄之旅叙事理论+作品类型叙事要求
- * v6.0.35: Seedance 2.0全链路分镜优化+发现页分页修复+generate-full-ai增强+Unicode乱码修复
- *          - 优化: generate-storyboards-ai分镜prompt注入Seedance 2.0描述指南（动作拆解/光影必写/禁模糊词）
- *          - 优化: generate-full-ai分镜prompt新增cameraAngle/timeOfDay字段+动作拆解指南（第9条要求）
- *          - 修复: generate-full-ai分镜构建使用AI生成的cameraAngle/timeOfDay替代硬编码模板
- *          - 修复: community/series分页over-fetch 3x补偿post-filter underfill（dbOffset=page*limit*3）
- *          - 修复: 4处Unicode乱码（charPrompt/大纲prompt/sbPrompt2/visualStyleGuide）用clean override绕过不可编辑的损坏字节
- * v6.0.34: 移动端风格选择一致性+发现完整集过滤+Seedance 2.0视频提示词增强
- *          - 功能: 发现页仅展示至少完成完整1集的漫剧系列（post-enrichment过滤）
- *          - 优化: volcengine/generate视频提示词注入Seedance 2.0专业约束（运镜/画质/防崩/i2v一致性）
- *          - 前端: 移动端创作面板风格选择改为wrap网格布局，与PC端一致
- * v6.0.33: 前端死代码/死导出清理（CommunityWork死类型+apiPut死函数+4个Props de-export）
- *          - 性能: GET /series/:id 三个子查询(characters+episodes+storyboards)从串行改为Promise.all并行
- *          - 清理: 前端seriesServicePG.ts合并入seriesService.ts并删除（消除冗余服务文件）
- *          - 清理: useSeries.ts移除冗余fallback（getUserSeries已内置maxRetries:2）
- *          - 清理: volcengine.ts GenerateVideoParams、batchVideoGeneration.ts BatchGenerationProgress de-export
- * v6.0.31: 死代码深度清理(21个死类型/6个死常量/VERSION.txt删除)
- * v6.0.30: 3个前端死导出清理(getViewingHistory/getEpisodeMergeStatus/getBatchGenerationStatus)
- * v6.0.29: count聚合优化全覆盖 + VideoPlayer组件恢复 + 未用包清理
- *          - 性能: community/works + user/:phone/works的likes查询从fetch-all-rows改为per-item head:true count
- *          - 修复: 前端VideoPlayer组件恢复（series/子组件引用的简单video wrapper被误删）
- *          - 清理: package.json移除11个未被任何文件导入的包
- * v6.0.28: 前端大文件全面拆分完成 + 死代码清理（后端无变更）
- *          - 拆分: SeriesViewer.tsx → 498行 + 5个子模块(viewer/)
- *          - 拆分: HomeCreationPanel.tsx → 431行 + ReferenceImageInput组件
- *          - 清理: 移除旧的内联回调函数(handleRefImageUpload等)
- * v6.0.27: 6处views列不存在修复（series表无views列）
- *          - 修复: getUserSeries select移除views列
- *          - 修复: 社区列表select移除views列
- *          - 修复: 社区列表popular排序改为created_at（views列不存在）
- *          - 修复: 社区列表映射views改为0（series表无views列）
- *          - 修复: 社区详情select移除views列
- *          - 修复: 社区详情映射views改为0（series表无views列）
- * v6.0.26: 8处schema不匹配修复（likes_count/comments_count/shares_count列不存在于series表）
- *          - 修复: 社区列表结果映射改用likesCountMap/commentsCountMap（之前误引series.likes_count）
- *          - 修复: 社区列表评论批量查询列名series_id→work_id（comments表实际使用work_id）
- *          - 修复: 社区详情select移除likes_count/shares_count/comments_count���改为并行count查询
- *          - 修复: 社区详情映射改用detailLikesCount/detailCommentsCount（之前仍读series.likes_count/comments_count）
- *          - 修复: 相似推荐select移除likes_count，改为created_at排序+批量likes count查询
- *          - 修复: 评论路由移除comments_count反规范化更新（列不存在）
- *          - 修复: 分享路由shares_count乐观锁→无状态stub（列不存在，与works/share对齐）
- * v6.0.25: 前端大文件拆分(SeriesViewer+HomeCreationPanel) + 死代码清理（后端无变更）
- * v6.0.24: 数据库查询全面精简（零功能变更）
- *          - 性能: 剩余24处 select('*') → 精确字段列表（详情/角色/剧集/分镜/评论/任务/浏览历史）
- *          - 性能: sync-video-tasks + recover-all-tasks 6处批量查询精简（排除prompt等大字段）
- *          - 性能: community/series/:id 详情页episodes/storyboards仅传输前端实际使用的字段
- * v6.0.23: 数据库调用深度优化（零功能变更）
- *          - 性能: 30+处 select('*') → 精确字段列表，series列表不再传输story_outline/coherence_check大字段
- *          - 性能: like-status/user-works/storyboards-ai 串行查询改为 Promise.all 并行
- *          - 性能: merge-all-videos/rebuild-merged-urls N+1查询→批量预取所有storyboard再内存分组
- *          - 性能: volcengine/status + refresh-video 三重顺序查找→.or()单次查询
- * v6.0.22: 分辨率一致性 + 进度通知精简 + 构��修复
- *          - 修复: 不同分镜视频尺寸不一致——volcengine/generate系列分镜强制seedance-1-5-pro+720p锁定
- *          - 修复: mp4concat.ts新增分辨率一致性校验（不一致时抛错回退播放列表）
- *          - 修复: 移除重复进度提示（toast.loading + fixed浮窗），仅保留右上角TaskStatusFloating
- *          - 构建: server/index.tsx替换为轻量级桩文件（不导入app.tsx，避免双函数打包超限）
- * v6.0.21: 真实MP4拼接+前场景图片参考注入+下载按钮
- *          - 核心: mp4concat.ts 纯TS MP4解析/拼接模块——多段MP4合并为单个完整视频文件
- *          - 核心: merge-videos/repair-video/merge-all 三路由"MP4拼接优先→播放列表回退"三级策略
- *          - 核心: volcengine/generate 前一场景图片自动注入——t2v自动升级为i2v提升视觉连贯性
- *          - 优化: rebuild-merged-urls 统一video_url空字符串过滤
- *          - 前端: 合并结果区分完整文件/播放列表标签+MP4下载按钮
- * v6.0.20: 合并分镜修复+重新合并+进度条seek+分镜连贯性强化
- *          - 修复: merge-videos/repair-video/merge-all/旧merge 4路由统一强化video_url过滤（排除空字符串和非http链接���
- *          - 修复: 合并时增加场景号详细日志+缺失分镜警告
- *          - 优化: generate-storyboards-ai 6条强化连贯性约束（角色/环境/时间/情感/动作/构图递进）
- *          - 优化: volcengine/generate 注入前2+后1场景完整上下文（含地点/时段/镜头/情感信息）
- *          - 优化: generate-full-ai 分镜prompt新增location/timeOfDay一致性+画面质量约束
- * v6.0.19: 火山引擎Doubao多模型智能路由 + 社区散乱分镜修复 + 封面缩略图修复
- *          - 新增: callAI()统一AI文本生成——Doubao Pro/Mini/Lite三级模型按任务复杂度自动路由
- *          - 新增: 模型token耗尽自动降级（Pro→Mini→Lite→Qwen fallback），30分��冷却后重试
- *          - 修复: community/works过滤掉属于系列的分镜视频（generation_metadata含seriesId的不再散乱显示）
- *          - 修复: 系列封面自动回退到首集缩略图/首个分镜图片，WorkCard优先使用thumbnail字段
- *          - 优化: 社区默认展示「漫剧系列」标签，移动端卡片布局紧凑化
- * v6.0.18: AI限流补全 + 快捷键帮助 + 相似推荐���航优化
- *          - 新增: generate-basic-info/generate-outline路由添加X-User-Phone频率限制（共享aiGenerate 5次/min）
- *          - 新增: ?键快捷键帮助浮层（7个快捷键说明 + 桌面端左下角?按钮）
- *          - 优化: 全剧终推荐作品点击改为onNavigateToSeries回调（取代window.location.hash hack）
- * v6.0.17: 播放体验增强 + 通用限流 + 键盘快捷键
- *          - 新增: 最后一集播完"全剧终"卡片（重播/选集/返回社区）
- *          - 新增: 通过createRateLimiter工厂 → upload/generate/createSeries/comment四路由限流
- *          - 新增: SeriesViewer键盘快捷键（Esc/←→/空格/Enter/L）+ 倒计时浮层缩略图
- *          - 新增: 后端community/series/:id/similar推荐接口 + 全剧终推荐卡片
- *          - 修复: 剧集列表状态判断补充mergedVideoUrl
- * v6.0.16: 六大修复——风格锁定/角色一致性/社区自动切集/状态修复/新风���+参考图/真实进度
- *          - 修复: volcengine/generate+retry 强制DB风格覆盖请求参数
- *          - 强化: 角色prompt外貌50-80字+参考图+身份锁定 | 新增: upload-image路由
- *          - 修复: 社区有videoUrl/mergedVideoUrl即completed | TaskStatusFloating真实进度轮询
- *          - 新增: 3D渲染/油画/水彩/黑白电影/蒸汽朋克/古风仙侠风格 + 参考图上传
- *          - 修复: PlaylistVideoPlayer onPlaylistEnded + SeriesViewer自动切集
- * v6.0.15: 分镜衔接连贯性增强——prompt三层改进 + crossfade过渡 + iOS内存清理
- *          - 核心: generate-full-ai 分镜prompt增加场景衔接7项要求 + transitionFromPrevious/endingVisualState
- *          - 核心: volcengine/generate 视频生成时注入前后场景描述（消除视频独立生成割裂感）
- *          - 核心: generate-storyboards-ai 增强——注入角色外貌卡/风格指南/前后集上下文
- *          - 后端: refresh-video 增强——重新查询火山引擎 + 自动转存OSS
- *          - 前端: PlaylistVideoPlayer crossfade过渡 + iOS slot B内存清理
- *          - 前端: ImmersiveVideoViewer 过期URL显示恢复覆盖层（不再直接关闭）
- * v6.0.14: 视频播放修复: CORS代理 + URL签名 + 过期恢复
- *          - 新增: POST /oss/fetch-json 后端代理路由（绕过 OSS CORS 限制）
- *          - 修复: 前端 PlaylistVideoPlayer 直接 fetch 失败时自动回退后端代��
- *          - 修复: SeriesViewer 切集时对 OSS 视频 URL 预签名
- *          - 修复: ImmersiveVideoViewer 新增"尝试恢复视频"按钮
- *          - 修复: PlaylistVideoPlayer z-index 层级防止控件被视频遮挡
- * v6.0.13: 构建修复 + 四项UX修复
- *          - 构建: server/index.tsx 同步到v6.0.13（此前停在v6.0.8，可能导致Supabase部署失败）
- *          - UX: 作品页 SeriesCard 添加卡片级 onClick，解决手机端触摸无法进入编辑
- *          - UX: community/works + 单系列详情 completedEpisodes 改为 status=completed || videoUrl
- *          - UX: 创作页默认风格改为 realistic、默认集数改为3，新增 comic/pixel 风格
- *          - UX: PlaylistVideoPlayer 重写为双缓冲方案，消除分镜切换加载画面
- * v6.0.12: 输入校验全面加固 + 常量提取 + 死代码清理
- *          - 安全: 全部6处 totalEpisodes 赋值钳制 1-50（含 create-from-idea、fix-episodes、generate-full-ai、DB来源）
- *          - 安全: sceneCount 钳制 1-30、volcengine prompt 限制 5000 字
- *          - 安全: 全部5处分页 limit 钳制 1-100、page_size 钳制 1-100、page ≥ 1
- *          - 常量: DASHSCOPE_IMAGE_URL + DASHSCOPE_TASKS_BASE_URL 提取（消除最后2处硬编码阿里云URL）
- *          - 注释: community/works likes 查询加 limit(5000) + NOTE 记录 PostgREST ���断风险
- *          - 清理: 前端 optimizedApiClient.ts 删除7个死导出 + networkOptimization.ts 删除13个死导出
- * v6.0.11: 安全+性能+代码质量深度审查
- *          - 安全: PUT /series/:id 白名单移除 views/likes_count/comments_count/shares_count 防客户端伪造计数
- *          - 并发: POST /series/:id/like + /community/works/:workId/like 竞态条件防护（23505唯一约束冲突→优雅降级为unlike）
- *          - 去重: 提取 fetchWithTimeout() 辅助函数，消除21处重复的 AbortController+setTimeout 样板代码
- *          - 清理: community/publish 移除3个未使用解构变量（title/style/duration）
- * v6.0.10: 后端9个死路由清理 + 19处遗漏静默catch补日志 + 死函数getOSSPublicUrl移除
- *          路由从93→84：/series/test, /series/test-direct-method, /modules-status,
- *          /series/:id/analyze, /series/:id/progress, /users/login, /users/:phone,
- *          /series/:id/process-step, /series/batch-fix
- * v6.0.9: 21处静默catch块补console.error日志 + 版本号同步
- * v6.0.8: 分镜/分集一致性增强——视觉风格指南 + 角色外貌锁定 + ���集剧情上下文 + 强化prompt
- * v6.0.7: GET /volcengine/tasks 自愈机制——自动检测孤儿任务(系列��删除)并标记cancelled
- * v6.0.3: 视频生成任务去重——/volcengine/generate 三层去重 + GET /series/:id/video-task-status
- * v5.6.1: OSS转存改为fire-and-forget（非��塞），解决状态轮询超时+请求风暴
- *         volcengine/status 端点: 查询火山引擎超时降至25s，视频完成后立即返回原始URL
- *         OSS转存在后台异步执行，不阻塞前端轮询响应
- * v5.6.0: AI漫剧内容多样化 + 视频与故事主题匹配 + 视频音频启用
- * v5.5.1: 修复 series_storyboards.episode_id 不存在 → 改用 series_id + episode_number 关联
- *         新增 /episodes/:id/merge-videos, merge-status, repair-video 路由
- * v5.2.0: 视频完成后自动同步缩略图/视频URL到series表 + 批量缩略图同步路由
- * v5.1.1: AI创作进度实时写入 + 失败状态改进
+ * Hono 服务器应用 - 模块化版本 (v6.0.163)
+ * Full changelog: see git history
  *
  * 原因：Supabase Edge Function bundler 只打包入口点的静态导入链中的文件。
  * 子目录文件（database/、routes/、middleware/ 等）不被包含在部署包中。
  * 因此所有关键业务逻辑必须内联在此文件中。
- *
- * v5.1.1 修复:
- * - generate-full-ai: 每步写入 generation_progress 到DB，前端轮询可获取实时进度
- * - 失败时写入 status=failed + error 到 generation_progress，而非回退到 draft
- * - 补全缺失的 generateStoryboards 前端服务函数
- *
- * v5.0.5 修复:
- * - 前端��本号同步（消除残留v5.0.3引用）
- * - server/index.tsx this绑定修复（Deno.serve包装箭头函数）
- * - 前端冷启动重试间隔优化（8次渐进退避，覆盖78秒）
- * - 静默窗口从45秒放大到60秒
- *
- * v5.0.0 关键修复:
- * - npm subpath imports 版本锁定（hono/cors、hono/logger）
- * - queryWithRetry 支持 count 返回
- * - shares/views 路由修复（移除无效 RPC 调用）
- * - 移除无前缀的 redirect 路由避免 Edge Function 路由冲突
  */
 import { Hono } from "npm:hono@4.0.2";
 import { cors } from "npm:hono@4.0.2/cors";
@@ -374,22 +12,24 @@ import { logger } from "npm:hono@4.0.2/logger";
 import { createClient } from "npm:@supabase/supabase-js@2.49.8";
 import { concatMP4 } from "./mp4concat.ts";
 
-// ==================== 模块化���入（v6.0.42: 重复基础设施代码清理完成） ====================
+// ==================== 模块化导入（v6.0.42: 重复基础设施代码清理完成） ====================
 import {
-  APP_VERSION, PREFIX, ADMIN_PHONE, VOLCENGINE_API_KEY, ALIYUN_BAILIAN_API_KEY, SUPABASE_ANON_KEY,
+  APP_VERSION, PREFIX, VOLCENGINE_API_KEY, ALIYUN_BAILIAN_API_KEY, SUPABASE_ANON_KEY,
   VOLCENGINE_BASE_URL, DASHSCOPE_IMAGE_URL, DASHSCOPE_TASKS_BASE_URL,
   IMAGE_BUCKET, STYLE_PROMPTS, SEEDANCE_BASE_SUFFIX, SEEDANCE_I2V_EXTRA,
   PRODUCTION_TYPE_PROMPTS, PRO_SHOT_MAP,
   MAX_SERVER_MERGE_SEGMENTS, MAX_SERVER_MERGE_SIZE_MB, ESTIMATED_SEGMENT_SIZE_MB,
+  getCreativeSeed,
 } from "./constants.ts";
 import {
   supabase, toCamelCase, toSnakeCase, truncateErrorMsg,
   isRetryableError, queryWithRetry, fetchWithTimeout,
 } from "./utils.ts";
 import { callAI } from "./ai-service.ts";
-import { isOSSConfigured, uploadToOSS, transferFileToOSS, generatePresignedPutUrl } from "./oss-service.ts";
+import { isOSSConfigured, uploadToOSS, transferFileToOSS, generatePresignedPutUrl, generatePresignedGetUrl, ensureOSSCors, resetOSSCorsCache } from "./oss-service.ts";
 import { rateLimiters } from "./rate-limiter.ts";
 import { getCinematographyBlock, repairTruncatedStoryboardJSON, detectAndFillEmptyDialogues } from "./helpers.ts";
+import { buildEpisodeOutlinePrompt, buildStoryboardPrompt, buildStyleGuidePrompt } from "./prompt-builders.ts";
 
 // 本地环境变量读取（仅用于 deploy-verify 诊断和启动日志，业务逻辑使用模块导出）
 const _SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
@@ -403,7 +43,43 @@ const ASPECT_TO_RESOLUTION: Record<string, string> = {
   '3:4':  '720x960',
 };
 
+// ==================== v6.0.176: 多管理员认证系统 ====================
+// 支持环境变量 ADMIN_PHONES（逗号分隔）+ KV 动态管理员列表
+const ADMIN_LIST_KV_KEY = 'admin_phones_list';
+const ADMIN_CACHE_TTL = 60_000; // 60s 缓存
+let _adminCache: { phones: Set<string>; ts: number } = { phones: new Set(), ts: 0 };
 
+/** 判断手机号是否为管理员（环境变量主管理员 + KV 动态管理员列表） */
+async function isAdminPhone(phone: string): Promise<boolean> {
+  if (!phone) return false;
+  // 1. 环境变量主管理员（逗号分隔，首位为超级管理员）
+  const envAdmins = (Deno.env.get('ADMIN_PHONES') || '').split(',').map(p => p.trim()).filter(Boolean);
+  if (envAdmins.includes(phone)) return true;
+  // 2. KV 动态管理员列表（带 60s 内存缓存）
+  const now = Date.now();
+  if (now - _adminCache.ts > ADMIN_CACHE_TTL) {
+    try {
+      const { data } = await supabase.from('kv_store_fc31472c').select('value').eq('key', ADMIN_LIST_KV_KEY).maybeSingle();
+      const phones: string[] = data?.value ? JSON.parse(data.value) : [];
+      _adminCache = { phones: new Set(phones), ts: now };
+    } catch (err) {
+      console.warn('[Admin] Failed to refresh admin cache:', err);
+      // 出错时继续使用过期缓存
+    }
+  }
+  return _adminCache.phones.has(phone);
+}
+
+/** 判断是否为超级管理员（仅环境变量中第一个） */
+function isSuperAdmin(phone: string): boolean {
+  const envAdmins = (Deno.env.get('ADMIN_PHONES') || '').split(',').map(p => p.trim()).filter(Boolean);
+  return envAdmins.length > 0 && envAdmins[0] === phone;
+}
+
+/** 强制刷新管理员缓存 */
+function invalidateAdminCache() {
+  _adminCache.ts = 0;
+}
 
 // ==================== Hono App ====================
 
@@ -445,25 +121,33 @@ app.onError((error, c) => {
 
 // ======================================================================
 //                       ROUTE INDEX / 路由索引
-//  v6.0.91 — app.tsx 路由按业务域分区索引, 辅助 6500+ 行文件快速导航
+//  app.tsx 路由按业务域分区索引, 辅助 8000+ 行文件快速导航
+//  (line numbers are approximate — search section headers to navigate)
 // ======================================================================
-//  [A] 系统基础    L~330   健康检查 / 版本 / 数据库诊断
-//  [B] 用户管理    L~469   注册 / 登录 / 手机号验证 / 昵称
-//  [C] 漫剧 CRUD   L~614   列表 / AI生成标题&大纲 / 详情 / 创建 / 更新 / 删除
-//  [D] 社区 & 互动  L~1197  社区作品 / 用户作品 / 点赞 / 评论 / 分享
-//  [E] 内容管理    L~1488  角色 / AI角色生成 / 剧集 / 分镜 / 视���任务
-//  [F] 浏览 & 运维  L~1775  浏览历史 / 数据库健康
-//  [G] 视频管道    L~1843  分镜视频生成 / 合并视频 / AI创意生成
-//  [H] 火山引擎    L~2370  视频提交 / 状态查询 / Debug / 批量操作
-//  [I] 社区补全    L~3353  社区作品评论 / 点赞 / 互动补全
-//  [J] OSS & 同步   L~3577  视频转存OSS / 批量同步状态 / 综合恢复
-//  [K] 生成管道    L~3976  缩略图同步 / 进度查询 / AI剧集生成 / 全量生成
-//  [L] AI 路由     L~5099  剧集大纲 / ���事增强 / 图片生成 / prompt润色
-//  [M] 社区系统    L~5297  社区漫剧列表 / 详情 / 浏览数
-//  [N] 管理维护    L~5768  补全路由 / 诊断修复 / 去重清理
-//  [O] 文件 & 签名  L~6296  图片上传 / OSS URL签名 / 视频任务状态
-//  [P] 兜底        L~6487  404处理
+//  [A] 系统基础       L~116   健康检查 / 版本 / 部署验证
+//  [B] 用户管理       L~209   登录 / 资料查询 / 昵称更新
+//  [C] 配额 & 管理员   L~336   视频配额 / 付款记录 / 管理员CRUD / 收款码
+//  [D] 共享工具函数    L~527   Volcengine URL刷新 / 任务同步helpers
+//  [E] 视频代理       L~598   字节流转发(GET/POST) / DB fallback / 批量刷新URL
+//  [F] 漫剧 CRUD     L~1031  列表 / AI生成标题&大纲 / 详情 / 创建 / 更新 / 删除
+//  [G] 社区 & 互动    L~1641  社区作品 / 用户作品 / 点赞 / 评论
+//  [H] 内容管理       L~1932  角色 / AI角色生成 / 剧集 / 分镜CRUD / 排序 / 润色
+//  [I] 视频任务       L~2413  任务查询 / 浏览历史 / 数据库健康检查
+//  [J] 视频管道       L~2523  分镜视频生成 / 合并视频 / AI创意生成
+//  [K] 火山引擎       L~3233  视频提交 / 状态查询 / Debug / 批量操作
+//  [L] 社区互动补全    L~4385  社区评论 / 点赞 / 分享补全路由
+//  [M] OSS & 同步     L~4612  视频转存OSS / 批量同步状态 / 综合恢复
+//  [N] 生成管道       L~4965  缩略图同步 / 进度查询 / AI剧集生成 / 全量生成
+//  [O] AI 路由       L~6655  剧集大纲 / 故事增强 / 图片生成 / prompt润色
+//  [P] 社区系统       L~6850  社区漫剧列表 / 详情 / 浏览数
+//  [Q] 管理维护       L~7317  补全路由 / 诊断修复 / 去重清理
+//  [R] 文件 & 签名    L~7840  图片上传 / OSS URL签名 / 视频任务状态
+//  [S] 兜底          L~8047  404处理
 // ======================================================================
+
+// v6.0.140: 移除启动时自动CORS配置——AK通常无PutBucketCors权限，每次冷启动打印错误日志
+// presigned GET URL已作为主下载路径，不依赖桶CORS配置
+// 如需手动配置CORS，请调用 GET /oss/cors-status?force=true
 
 // ==================== [A] 健康检查 ====================
 
@@ -558,7 +242,7 @@ app.get(`${PREFIX}/deploy-verify`, async (c) => {
   });
 });
 
-// ==================== 用户管理 ====================
+// ==================== [B] 用户管理 ====================
 
 // 共享登录逻辑：查找或创建用户，返回 camelCase 用户对象
 async function handleUserLogin(phone: string): Promise<{ user: any; error?: string }> {
@@ -603,31 +287,13 @@ app.post(`${PREFIX}/user/login`, async (c) => {
   }
 });
 
-// 获取用户资料 - /user/profile/:phone
+// 获取用户资料 - /user/profile/:phone (reuses handleUserLogin find-or-create)
 app.get(`${PREFIX}/user/profile/:phone`, async (c) => {
   try {
     const phone = c.req.param('phone');
-    // v6.0.23: select specific fields instead of *
-    const { data, error } = await supabase
-      .from('users')
-      .select('id, phone, nickname, avatar_url, created_at, updated_at')
-      .eq('phone', phone)
-      .maybeSingle();
-
-    if (error) return c.json({ error: error.message }, 500);
-
-    if (!data) {
-      // 自动创建用户
-      const { data: newUser, error: createErr } = await supabase
-        .from('users')
-        .insert({ phone, nickname: `用户${phone.slice(-4)}` })
-        .select()
-        .single();
-      if (createErr) return c.json({ error: createErr.message }, 500);
-      return c.json({ success: true, user: toCamelCase(newUser) });
-    }
-
-    return c.json({ success: true, user: toCamelCase(data) });
+    const result = await handleUserLogin(phone);
+    if (result.error) return c.json({ error: result.error }, 500);
+    return c.json({ success: true, user: result.user });
   } catch (error: any) {
     console.error('[Users] Profile error:', truncateErrorMsg(error));
     return c.json({ error: error.message }, 500);
@@ -703,7 +369,7 @@ app.put(`${PREFIX}/user/profile/:phone/nickname`, async (c) => {
   }
 });
 
-// ==================== v6.0.96 视频配额 & 管理员 ====================
+// ==================== [C] 视频配额 & 管理员 ====================
 
 function dailyCountKey(phone: string, date: string) { return `daily_video_count:${phone}:${date}`; }
 function dailyLimitKey(phone: string) { return `user_daily_limit:${phone}`; }
@@ -727,7 +393,8 @@ async function getUserQuota(phone: string): Promise<{ usedToday: number; freeLim
 app.get(`${PREFIX}/user/video-quota/:phone`, async (c) => {
   try {
     const phone = c.req.param('phone');
-    if (phone === ADMIN_PHONE) return c.json({ success: true, data: { usedToday: 0, freeLimit: 999, paidCredits: 0, freeRemaining: 999, totalRemaining: 999, isAdmin: true } });
+    const phoneIsAdmin = await isAdminPhone(phone);
+    if (phoneIsAdmin) return c.json({ success: true, data: { usedToday: 0, freeLimit: 999, paidCredits: 0, freeRemaining: 999, totalRemaining: 999, isAdmin: true } });
     const quota = await getUserQuota(phone);
     return c.json({ success: true, data: { ...quota, isAdmin: false } });
   } catch (err: any) { return c.json({ error: err.message }, 500); }
@@ -753,7 +420,7 @@ app.post(`${PREFIX}/payment/record`, async (c) => {
 app.get(`${PREFIX}/admin/users`, async (c) => {
   try {
     const adminPhone = c.req.query('adminPhone');
-    if (adminPhone !== ADMIN_PHONE) return c.json({ error: '无权限' }, 403);
+    if (!adminPhone || !(await isAdminPhone(adminPhone))) return c.json({ error: '无权限' }, 403);
     const { data: usersData, error } = await supabase.from('users').select('id, phone, nickname, created_at, updated_at').order('created_at', { ascending: false }).limit(200);
     if (error) return c.json({ error: error.message }, 500);
     const today = new Date().toISOString().split('T')[0];
@@ -766,8 +433,13 @@ app.get(`${PREFIX}/admin/users`, async (c) => {
         (kvData || []).forEach((row: any) => { kvMap[row.key] = row.value; });
       }
     }
+    // v6.0.176: 批量预取管理员集合，避免 .map() 中逐个 await
+    const adminPhoneSet = new Set<string>();
+    const _envAdmins = (Deno.env.get('ADMIN_PHONES') || '').split(',').map(p => p.trim()).filter(Boolean);
+    _envAdmins.forEach(p => adminPhoneSet.add(p));
+    _adminCache.phones.forEach(p => adminPhoneSet.add(p));
     const users = (usersData || []).map((u: any) => {
-      const isAdminUser = u.phone === ADMIN_PHONE;
+      const isAdminUser = adminPhoneSet.has(u.phone);
       return {
         id: u.id, phone: u.phone, nickname: u.nickname || `用户${u.phone.slice(-4)}`,
         createdAt: u.created_at, updatedAt: u.updated_at,
@@ -785,7 +457,7 @@ app.get(`${PREFIX}/admin/users`, async (c) => {
 app.post(`${PREFIX}/admin/users/settings`, async (c) => {
   try {
     const { adminPhone, targetPhone, freeLimit, addCredits } = await c.req.json();
-    if (adminPhone !== ADMIN_PHONE) return c.json({ error: '无权限' }, 403);
+    if (!adminPhone || !(await isAdminPhone(adminPhone))) return c.json({ error: '无权限' }, 403);
     if (!targetPhone) return c.json({ error: '缺少目标用户手机号' }, 400);
     const ops: Promise<any>[] = [];
     if (freeLimit !== undefined) ops.push(supabase.from('kv_store_fc31472c').upsert({ key: dailyLimitKey(targetPhone), value: String(Math.max(0, parseInt(freeLimit) || 5)) }, { onConflict: 'key' }));
@@ -804,7 +476,7 @@ app.post(`${PREFIX}/admin/users/settings`, async (c) => {
 app.get(`${PREFIX}/admin/pending-count`, async (c) => {
   try {
     const adminPhone = c.req.query('adminPhone');
-    if (adminPhone !== ADMIN_PHONE) return c.json({ error: '无权限' }, 403);
+    if (!adminPhone || !(await isAdminPhone(adminPhone))) return c.json({ error: '无权限' }, 403);
     const { data: indexData } = await supabase.from('kv_store_fc31472c').select('value').eq('key', 'payment_records_index').maybeSingle();
     const idList: string[] = indexData ? JSON.parse((indexData as any).value || '[]') : [];
     if (idList.length === 0) return c.json({ success: true, data: { pendingCount: 0 } });
@@ -820,7 +492,7 @@ app.get(`${PREFIX}/admin/pending-count`, async (c) => {
 app.get(`${PREFIX}/admin/payments`, async (c) => {
   try {
     const adminPhone = c.req.query('adminPhone');
-    if (adminPhone !== ADMIN_PHONE) return c.json({ error: '无权限' }, 403);
+    if (!adminPhone || !(await isAdminPhone(adminPhone))) return c.json({ error: '无权限' }, 403);
     const { data: indexData } = await supabase.from('kv_store_fc31472c').select('value').eq('key', 'payment_records_index').maybeSingle();
     const idList: string[] = indexData ? JSON.parse((indexData as any).value || '[]') : [];
     if (idList.length === 0) return c.json({ success: true, data: { payments: [] } });
@@ -834,16 +506,21 @@ app.get(`${PREFIX}/admin/payments`, async (c) => {
 app.post(`${PREFIX}/admin/payments/approve`, async (c) => {
   try {
     const { adminPhone, paymentId, targetPhone, credits } = await c.req.json();
-    if (adminPhone !== ADMIN_PHONE) return c.json({ error: '无权限' }, 403);
-    const { data: rD } = await supabase.from('kv_store_fc31472c').select('value').eq('key', paymentRecordKey(paymentId)).maybeSingle();
+    if (!adminPhone || !(await isAdminPhone(adminPhone))) return c.json({ error: '无权限' }, 403);
+    // v6.0.175: parallelize independent reads, then parallelize writes
+    const [{ data: rD }, { data: cd }] = await Promise.all([
+      supabase.from('kv_store_fc31472c').select('value').eq('key', paymentRecordKey(paymentId)).maybeSingle(),
+      supabase.from('kv_store_fc31472c').select('value').eq('key', paidCreditsKey(targetPhone)).maybeSingle(),
+    ]);
+    const writeOps: Promise<any>[] = [];
     if (rD?.value) {
       const rec = JSON.parse((rD as any).value);
       rec.status = 'approved'; rec.approvedAt = new Date().toISOString();
-      await supabase.from('kv_store_fc31472c').upsert({ key: paymentRecordKey(paymentId), value: JSON.stringify(rec) }, { onConflict: 'key' });
+      writeOps.push(supabase.from('kv_store_fc31472c').upsert({ key: paymentRecordKey(paymentId), value: JSON.stringify(rec) }, { onConflict: 'key' }));
     }
-    const { data: cd } = await supabase.from('kv_store_fc31472c').select('value').eq('key', paidCreditsKey(targetPhone)).maybeSingle();
     const cur = parseInt((cd as any)?.value || '0') || 0;
-    await supabase.from('kv_store_fc31472c').upsert({ key: paidCreditsKey(targetPhone), value: String(cur + parseInt(credits)) }, { onConflict: 'key' });
+    writeOps.push(supabase.from('kv_store_fc31472c').upsert({ key: paidCreditsKey(targetPhone), value: String(cur + parseInt(credits)) }, { onConflict: 'key' }));
+    await Promise.all(writeOps);
     console.log(`[Admin] Approved payment ${paymentId}: +${credits} credits to ${targetPhone}`);
     return c.json({ success: true });
   } catch (err: any) { console.error('[Admin] Approve error:', err.message); return c.json({ error: err.message }, 500); }
@@ -852,7 +529,7 @@ app.post(`${PREFIX}/admin/payments/approve`, async (c) => {
 app.post(`${PREFIX}/admin/payments/reject`, async (c) => {
   try {
     const { adminPhone, paymentId } = await c.req.json();
-    if (adminPhone !== ADMIN_PHONE) return c.json({ error: '无权限' }, 403);
+    if (!adminPhone || !(await isAdminPhone(adminPhone))) return c.json({ error: '无权限' }, 403);
     const { data: rD } = await supabase.from('kv_store_fc31472c').select('value').eq('key', paymentRecordKey(paymentId)).maybeSingle();
     if (rD?.value) {
       const rec = JSON.parse((rD as any).value);
@@ -873,14 +550,167 @@ app.get(`${PREFIX}/admin/wechat-qr`, async (c) => {
 app.post(`${PREFIX}/admin/wechat-qr`, async (c) => {
   try {
     const { adminPhone, url } = await c.req.json();
-    if (adminPhone !== ADMIN_PHONE) return c.json({ error: '无权限' }, 403);
+    if (!adminPhone || !(await isAdminPhone(adminPhone))) return c.json({ error: '无权限' }, 403);
     if (!url || !url.startsWith('http')) return c.json({ error: 'URL格式不正确' }, 400);
     await supabase.from('kv_store_fc31472c').upsert({ key: 'wechat_qr_url', value: url }, { onConflict: 'key' });
     return c.json({ success: true });
   } catch (err: any) { return c.json({ error: err.message }, 500); }
 });
 
-// ==================== 视频代理（轻量字节流转发，供客户端本地合并使用）====================
+// ── v6.0.176: 管理员身份检查（供前端判断 isAdmin，不暴露管理员列表） ──
+app.get(`${PREFIX}/admin/check/:phone`, async (c) => {
+  try {
+    const phone = c.req.param('phone');
+    if (!phone) return c.json({ success: true, data: { isAdmin: false } });
+    const admin = await isAdminPhone(phone);
+    return c.json({ success: true, data: { isAdmin: admin, isSuperAdmin: admin && isSuperAdmin(phone) } });
+  } catch (err: any) { return c.json({ error: err.message }, 500); }
+});
+
+// ── v6.0.176: 管理员列表管理（仅超级管理员可操作） ──
+app.get(`${PREFIX}/admin/admins`, async (c) => {
+  try {
+    const adminPhone = c.req.query('adminPhone');
+    if (!adminPhone || !isSuperAdmin(adminPhone)) return c.json({ error: '仅超级管理员可查看管理员列表' }, 403);
+    // 合并环境变量 + KV 动态列表
+    const envAdmins = (Deno.env.get('ADMIN_PHONES') || '').split(',').map(p => p.trim()).filter(Boolean);
+    const { data } = await supabase.from('kv_store_fc31472c').select('value').eq('key', ADMIN_LIST_KV_KEY).maybeSingle();
+    const kvAdmins: string[] = data?.value ? JSON.parse(data.value) : [];
+    const allAdmins = [...new Set([...envAdmins, ...kvAdmins])];
+    return c.json({ success: true, data: { admins: allAdmins.map(p => ({ phone: p, source: envAdmins.includes(p) ? 'env' : 'dynamic', isSuperAdmin: envAdmins[0] === p })) } });
+  } catch (err: any) { console.error('[Admin] List admins error:', err.message); return c.json({ error: err.message }, 500); }
+});
+
+app.post(`${PREFIX}/admin/admins/add`, async (c) => {
+  try {
+    const { adminPhone, targetPhone } = await c.req.json();
+    if (!adminPhone || !isSuperAdmin(adminPhone)) return c.json({ error: '仅超级管理员可添加管理员' }, 403);
+    if (!targetPhone || !/^1[3-9]\d{9}$/.test(targetPhone)) return c.json({ error: '目标手机号格式不正确' }, 400);
+    // 检查是否已是管理员
+    if (await isAdminPhone(targetPhone)) return c.json({ error: '该用户已是管理员' }, 400);
+    // 添加到 KV 动态列表
+    const { data } = await supabase.from('kv_store_fc31472c').select('value').eq('key', ADMIN_LIST_KV_KEY).maybeSingle();
+    const kvAdmins: string[] = data?.value ? JSON.parse(data.value) : [];
+    kvAdmins.push(targetPhone);
+    await supabase.from('kv_store_fc31472c').upsert({ key: ADMIN_LIST_KV_KEY, value: JSON.stringify(kvAdmins) }, { onConflict: 'key' });
+    invalidateAdminCache();
+    console.log(`[Admin] Super admin ${adminPhone} added admin: ${targetPhone}`);
+    return c.json({ success: true });
+  } catch (err: any) { console.error('[Admin] Add admin error:', err.message); return c.json({ error: err.message }, 500); }
+});
+
+app.post(`${PREFIX}/admin/admins/remove`, async (c) => {
+  try {
+    const { adminPhone, targetPhone } = await c.req.json();
+    if (!adminPhone || !isSuperAdmin(adminPhone)) return c.json({ error: '仅超级管理员可移除管理员' }, 403);
+    if (!targetPhone) return c.json({ error: '缺少目标手机号' }, 400);
+    // 不能移除环境变量中的管理员
+    const envAdmins = (Deno.env.get('ADMIN_PHONES') || '').split(',').map(p => p.trim()).filter(Boolean);
+    if (envAdmins.includes(targetPhone)) return c.json({ error: '环境变量配置的管理员不能通过此接口移除' }, 400);
+    // 从 KV 列表移除
+    const { data } = await supabase.from('kv_store_fc31472c').select('value').eq('key', ADMIN_LIST_KV_KEY).maybeSingle();
+    const kvAdmins: string[] = data?.value ? JSON.parse(data.value) : [];
+    const filtered = kvAdmins.filter(p => p !== targetPhone);
+    await supabase.from('kv_store_fc31472c').upsert({ key: ADMIN_LIST_KV_KEY, value: JSON.stringify(filtered) }, { onConflict: 'key' });
+    invalidateAdminCache();
+    console.log(`[Admin] Super admin ${adminPhone} removed admin: ${targetPhone}`);
+    return c.json({ success: true });
+  } catch (err: any) { console.error('[Admin] Remove admin error:', err.message); return c.json({ error: err.message }, 500); }
+});
+
+// v6.0.160: Helper — 创建Volcengine URL刷新函数，用于transferFileToOSS的403重试
+// 查询Volcengine API获取最新video_url（TOS签名URL会定期刷新）
+function makeVolcRefreshFn(volcengineTaskId: string | null | undefined): (() => Promise<string | null>) | undefined {
+  if (!volcengineTaskId || !VOLCENGINE_API_KEY) return undefined;
+  return async () => {
+    try {
+      const resp = await fetchWithTimeout(`${VOLCENGINE_BASE_URL}/${volcengineTaskId}`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${VOLCENGINE_API_KEY}`, 'Content-Type': 'application/json' },
+      }, 15000);
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      const status = data.status || data.data?.status || '';
+      if (['succeeded', 'completed', 'success'].includes(status)) {
+        const freshUrl = data.content?.video_url || data.data?.content?.video_url || '';
+        if (freshUrl && freshUrl.startsWith('http')) {
+          console.log(`[OSS] 🔄 Volcengine returned fresh URL for ${volcengineTaskId}`);
+          return freshUrl;
+        }
+      }
+      return null;
+    } catch (e: any) {
+      console.warn(`[OSS] Volcengine URL refresh query failed: ${e.message}`);
+      return null;
+    }
+  };
+}
+
+// ── Shared Volcengine task-sync helpers (used by sync-pending-tasks, recover-all-tasks) ──
+
+/** Shared field selection for task queries — avoids duplicating long column lists */
+const TASK_SYNC_FIELDS = 'task_id, volcengine_task_id, status, video_url, thumbnail, generation_metadata, series_id, created_at';
+
+/** Query Volcengine API for task status; returns normalized result */
+async function queryVolcengineStatus(volcId: string, timeout = 10000): Promise<{
+  volcStatus: 'completed' | 'failed' | 'running';
+  videoUrl: string;
+  thumbnailUrl: string;
+}> {
+  const resp = await fetchWithTimeout(`${VOLCENGINE_BASE_URL}/${volcId}`, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${VOLCENGINE_API_KEY}`, 'Content-Type': 'application/json' },
+  }, timeout);
+  if (!resp.ok) {
+    return { volcStatus: resp.status === 404 ? 'failed' : 'running', videoUrl: '', thumbnailUrl: '' };
+  }
+  const apiData = await resp.json();
+  const rawStatus = apiData.status || 'unknown';
+  if (['succeeded', 'completed', 'success'].includes(rawStatus)) {
+    return {
+      volcStatus: 'completed',
+      videoUrl: apiData.content?.video_url || apiData.video_url || '',
+      thumbnailUrl: apiData.content?.cover_url || apiData.thumbnail || '',
+    };
+  }
+  if (['failed', 'error'].includes(rawStatus)) {
+    return { volcStatus: 'failed', videoUrl: '', thumbnailUrl: '' };
+  }
+  return { volcStatus: 'running', videoUrl: '', thumbnailUrl: '' };
+}
+
+/** Mark task as failed in DB */
+async function markTaskFailed(taskId: string) {
+  await supabase.from('video_tasks').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('task_id', taskId);
+}
+
+/** Write back completed status to video_tasks + series_storyboards (if applicable) */
+async function writeBackTaskCompletion(task: any, videoUrl: string, thumbnailUrl?: string) {
+  const upd: any = { status: 'completed', updated_at: new Date().toISOString() };
+  if (videoUrl) upd.video_url = videoUrl;
+  if (thumbnailUrl) upd.thumbnail = thumbnailUrl;
+  await supabase.from('video_tasks').update(upd).eq('task_id', task.task_id);
+
+  // Propagate to series_storyboards if this is a storyboard video task
+  if (videoUrl && task.generation_metadata?.type === 'storyboard_video') {
+    const meta = task.generation_metadata;
+    const sn = meta.storyboardNumber || meta.sceneNumber;
+    if (meta.seriesId && meta.episodeNumber && sn) {
+      await supabase.from('series_storyboards').update({
+        video_url: videoUrl, status: 'completed', updated_at: new Date().toISOString(),
+      }).eq('series_id', meta.seriesId).eq('episode_number', meta.episodeNumber).eq('scene_number', sn);
+    }
+  }
+}
+
+/** Safely parse generation_metadata (may be string or object); returns null on failure */
+function parseMeta(raw: any): Record<string, any> | null {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+// ==================== [E] 视频代理（轻量字节流转发，供客户端本地合并使用）====================
 // v6.0.99: 服务器只做 HTTP 代理转发，零 FFmpeg 资源消耗，完全避免"服务器计算资源不足"
 // v6.0.110: 上游 fetch 增加 30s 超时，防止死 URL 导致 Edge Function 挂起
 // v6.0.114: 新增 POST handler — 避免 GET query string URL 过长导致浏览器 Failed to fetch
@@ -917,11 +747,22 @@ async function tryDbFallback(videoUrl: string, context: { seriesId: string; epis
         }
       }
     }
+    // v6.0.135 Bug E fix: accept any non-TOS URL from DB as fallback (not just .aliyuncs.com)
+    // Rationale: DB may have non-OSS CDN URLs or other stable URLs we can use
+    // Still exclude TOS (volces.com/tos-cn) — those also expire like the original
     // v6.0.132: 允许DB URL与输入相同时也重试——超时可能是瞬态网络问题（不同于403签名过期）
     // 但仅对timeout场景重试同URL，403场景同URL确定无效
+    // v6.0.136 Bug 2 fix: NEVER retry same URL on timeout — prevents double 60s cascade
+    // Root cause: OSS times out (60s), tryDbFallback finds same OSS URL in DB,
+    //   retries with another 60s timeout → total 120s server time > 75s client window → client AbortError
+    // Fix: isSameUrl always takes false path → server returns 504 quickly after the first 60s OSS timeout
+    //      Client receives 504 properly (within 75s), retries or falls through to direct download
+    // v6.0.135 Bug E: accept any non-TOS URL from DB as fallback (not just .aliyuncs.com)
     const isSameUrl = ossUrl === videoUrl;
-    const isTimeoutReason = reason.toLowerCase().includes('timeout');
-    if (ossUrl && ossUrl.includes('.aliyuncs.com') && (!isSameUrl || isTimeoutReason)) {
+    const isTosCandidate = ossUrl ? (ossUrl.includes('volces.com') || ossUrl.includes('tos-cn')) : false;
+    // Accept: non-TOS URL that is DIFFERENT from the failed URL
+    const shouldTry = ossUrl && ossUrl.startsWith('http') && !isTosCandidate && !isSameUrl;
+    if (shouldTry) {
       console.log(`[VideoProxy] ${isSameUrl ? '🔄 DB has same URL, retrying (timeout may be transient)...' : '✅ DB fallback found different OSS URL'} for scene ${context.sceneNumber}`);
       const fallbackResp = await fetch(ossUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VideoProxy/1.0)' },
@@ -1004,7 +845,9 @@ async function handleVideoProxy(videoUrl: string, context?: { seriesId?: string;
       if (fallback) return fallback;
     }
 
-    return new Response(JSON.stringify({ error: '代理请求失败', detail, timeout: isTimeout }), {
+    // v6.0.137: include ossUrl flag so client can skip futile proxy retries for OSS timeouts
+    const isOssUrl = videoUrl.includes('.aliyuncs.com');
+    return new Response(JSON.stringify({ error: '代理请求失败', detail, timeout: isTimeout, ossUrl: isOssUrl }), {
       status: statusCode,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
     });
@@ -1058,13 +901,14 @@ app.post(`${PREFIX}/storyboards/bulk-refresh-urls`, async (c) => {
       it.currentUrl && !it.currentUrl.includes('volces.com') && !it.currentUrl.includes('tos-cn')
     );
 
+    // v6.0.135 Bug D fix: increase HEAD timeout 8s→15s (Aliyun OSS from foreign Edge Function needs 10-15s)
     // v6.0.132: OSS URL也做HEAD验证（之前盲目passthrough，但OSS URL也可能超时/不可达）
-    // 并发HEAD检查，timeout 8s；失败时查DB是否有替代URL
+    // 并发HEAD检查，timeout 15s；失败时查DB（storyboards + video_tasks）是否有替代URL
     for (let i = 0; i < ossItems.length; i += 4) {
       const batch = ossItems.slice(i, i + 4);
       const batchResults = await Promise.all(batch.map(async (it: any) => {
         try {
-          const headResp = await fetchWithTimeout(it.currentUrl, { method: 'HEAD' }, 8000);
+          const headResp = await fetchWithTimeout(it.currentUrl, { method: 'HEAD' }, 15000);
           if (headResp.ok || headResp.status === 304) {
             return { sceneNumber: it.sceneNumber, originalUrl: it.currentUrl, freshUrl: it.currentUrl, source: 'oss-validated' };
           }
@@ -1074,22 +918,55 @@ app.post(`${PREFIX}/storyboards/bulk-refresh-urls`, async (c) => {
           // Timeout or network error — try DB for alternative URL
           console.warn(`[BulkRefresh] OSS HEAD failed for scene ${it.sceneNumber}: ${headErr.message}, checking DB...`);
         }
-        // DB fallback: check if there's a different URL in storyboards or video_tasks
+        // DB fallback: check storyboards AND video_tasks for alternative URL
         if (seriesId && episodeNumber) {
           const { data: sbRow } = await supabase.from('series_storyboards')
             .select('video_url').eq('series_id', seriesId).eq('episode_number', episodeNumber).eq('scene_number', it.sceneNumber).single();
           if (sbRow?.video_url && sbRow.video_url !== it.currentUrl && sbRow.video_url.startsWith('http')) {
-            console.log(`[BulkRefresh] Scene ${it.sceneNumber}: DB has different URL, using it`);
+            console.log(`[BulkRefresh] Scene ${it.sceneNumber}: DB storyboards has different URL, using it`);
             return { sceneNumber: it.sceneNumber, originalUrl: it.currentUrl, freshUrl: sbRow.video_url, source: 'oss-db-fallback' };
           }
+          // v6.0.135 Bug D fix: also check video_tasks (might have OSS URL when storyboards doesn't)
+          const { data: taskRows } = await supabase.from('video_tasks')
+            .select('video_url, generation_metadata')
+            .eq('status', 'completed')
+            .filter('generation_metadata->>seriesId', 'eq', seriesId)
+            .like('video_url', '%aliyuncs.com%');
+          if (taskRows) {
+            for (const t of taskRows) {
+              const m = t.generation_metadata;
+              if (m?.episodeNumber === episodeNumber &&
+                  (m?.storyboardNumber === it.sceneNumber || m?.sceneNumber === it.sceneNumber) &&
+                  t.video_url && t.video_url !== it.currentUrl) {
+                console.log(`[BulkRefresh] Scene ${it.sceneNumber}: video_tasks has OSS URL, using it`);
+                return { sceneNumber: it.sceneNumber, originalUrl: it.currentUrl, freshUrl: t.video_url, source: 'oss-task-fallback' };
+              }
+            }
+          }
         }
-        // No alternative — mark as unreachable so client can handle
+        // No alternative — mark as unreachable so client gives 1 proxy attempt (not skip entirely)
         return { sceneNumber: it.sceneNumber, originalUrl: it.currentUrl, freshUrl: it.currentUrl, source: 'oss-unreachable' };
       }));
       results.push(...batchResults);
     }
 
     if (volcItems.length === 0) {
+      // v6.0.138: also generate presigned GET URLs for OSS-only path
+      if (isOSSConfigured()) {
+        await Promise.all(results.map(async (r: any) => {
+          if (r.freshUrl && r.freshUrl.includes('.aliyuncs.com')) {
+            try {
+              const urlObj = new URL(r.freshUrl);
+              const objectKey = urlObj.pathname.startsWith('/') ? urlObj.pathname.slice(1) : urlObj.pathname;
+              if (objectKey) {
+                r.presignedGetUrl = await generatePresignedGetUrl(objectKey, 7200);
+              }
+            } catch (e: any) {
+              console.warn(`[BulkRefresh] presignedGetUrl failed for scene ${r.sceneNumber}: ${e.message}`);
+            }
+          }
+        }));
+      }
       return c.json({ success: true, data: { results } });
     }
 
@@ -1131,7 +1008,7 @@ app.post(`${PREFIX}/storyboards/bulk-refresh-urls`, async (c) => {
       }
     }
 
-    // 步骤3: 逐场景解析最佳可用URL（并发限制=4）
+    // 步骤3: 逐场景解析最佳��用URL（并发限制=4）
     const CONCURRENCY = 4;
     for (let i = 0; i < volcItems.length; i += CONCURRENCY) {
       const batch = volcItems.slice(i, i + CONCURRENCY);
@@ -1157,7 +1034,7 @@ app.post(`${PREFIX}/storyboards/bulk-refresh-urls`, async (c) => {
           return { sceneNumber: scn, originalUrl: it.currentUrl, freshUrl: task.video_url, source: 'db-task-oss' };
         }
 
-        // ── 优先级3: DB中有非TOS URL（其他CDN等），���接返回 ──
+        // ── 优先级3: DB中有非TOS URL（其他CDN等），直接返回 ──
         if (dbSbUrl && !dbSbUrl.includes('volces.com') && !dbSbUrl.includes('tos-cn') && dbSbUrl.startsWith('http')) {
           console.log(`[BulkRefresh] Scene ${scn}: non-TOS URL in DB`);
           return { sceneNumber: scn, originalUrl: it.currentUrl, freshUrl: dbSbUrl, source: 'db-other' };
@@ -1190,7 +1067,8 @@ app.post(`${PREFIX}/storyboards/bulk-refresh-urls`, async (c) => {
           // v6.0.128: HEAD验证URL是否可访问（Volcengine可能返回同一个已过期签名URL）
           let urlAccessible = true;
           try {
-            const headResp = await fetchWithTimeout(volcUrl, { method: 'HEAD' }, 8000);
+            // v6.0.137: 8s→15s — consistent with OSS HEAD timeout; overseas Edge Function needs 10-15s
+            const headResp = await fetchWithTimeout(volcUrl, { method: 'HEAD' }, 15000);
             if (headResp.status === 403 || headResp.status === 401) {
               console.warn(`[BulkRefresh] Scene ${scn}: Volcengine URL still expired (HEAD ${headResp.status})`);
               urlAccessible = false;
@@ -1208,7 +1086,7 @@ app.post(`${PREFIX}/storyboards/bulk-refresh-urls`, async (c) => {
             if (isOSSConfigured() && !volcUrl.includes('.aliyuncs.com')) {
               (async () => {
                 try {
-                  const tr = await transferFileToOSS(volcUrl, `videos/${task.task_id}.mp4`, 'video/mp4');
+                  const tr = await transferFileToOSS(volcUrl, `videos/${task.task_id}.mp4`, 'video/mp4', makeVolcRefreshFn(task.volcengine_task_id));
                   if (tr.transferred) {
                     await supabase.from('video_tasks').update({ video_url: tr.url }).eq('task_id', task.task_id);
                     await supabase.from('series_storyboards').update({ video_url: tr.url })
@@ -1235,6 +1113,26 @@ app.post(`${PREFIX}/storyboards/bulk-refresh-urls`, async (c) => {
       results.push(...batchResults);
     }
 
+    // v6.0.138: 为所有OSS URL结果生成预签名GET URL（浏览器直连下载兜底，绕过CORS限制）
+    // 当桶CORS配置缺失/失败时，presigned URL仍然可以正常跨域下载（OSS签名URL自带鉴权，不受CORS限制）
+    if (isOSSConfigured()) {
+      const ossEndpointPrefix = `${Deno.env.get('ALIYUN_OSS_BUCKET_NAME')}.`;
+      await Promise.all(results.map(async (r: any) => {
+        if (r.freshUrl && r.freshUrl.includes('.aliyuncs.com')) {
+          try {
+            // 从完整URL提取objectKey: https://bucket.region.aliyuncs.com/videos/xxx.mp4 → videos/xxx.mp4
+            const urlObj = new URL(r.freshUrl);
+            const objectKey = urlObj.pathname.startsWith('/') ? urlObj.pathname.slice(1) : urlObj.pathname;
+            if (objectKey) {
+              r.presignedGetUrl = await generatePresignedGetUrl(objectKey, 7200);
+            }
+          } catch (e: any) {
+            console.warn(`[BulkRefresh] presignedGetUrl generation failed for scene ${r.sceneNumber}: ${e.message}`);
+          }
+        }
+      }));
+    }
+
     const resolved = results.filter(r => r.freshUrl !== r.originalUrl).length;
     const sources = results.reduce((acc: any, r) => { acc[r.source] = (acc[r.source] || 0) + 1; return acc; }, {});
     console.log(`[BulkRefresh] Done: ${resolved}/${volcItems.length} URLs resolved. Sources:`, JSON.stringify(sources));
@@ -1245,7 +1143,7 @@ app.post(`${PREFIX}/storyboards/bulk-refresh-urls`, async (c) => {
   }
 });
 
-// ==================== 漫剧列表 ====================
+// ==================== [F] 漫剧列表 ====================
 
 app.get(`${PREFIX}/series`, async (c) => {
   try {
@@ -1316,7 +1214,7 @@ app.get(`${PREFIX}/series`, async (c) => {
   }
 });
 
-// ==================== AI生成漫剧基本信息（必须在 series/:id 之前注册） ====================
+// ==================== [F] AI生成漫剧基本信息（必须在 series/:id 之前注册） ====================
 
 app.post(`${PREFIX}/series/generate-basic-info`, async (c) => {
   try {
@@ -1332,12 +1230,12 @@ app.post(`${PREFIX}/series/generate-basic-info`, async (c) => {
       }
     }
 
-    // v6.0.19: 无任何AI key��使用fallback
+    // v6.0.19: 无任何AI key时使用fallback
     if (!VOLCENGINE_API_KEY && !ALIYUN_BAILIAN_API_KEY) {
       const fallbackTitles = [
-        { title: '星辰之约', description: '在繁华都市的霓虹灯下，两个看似毫无交集的灵魂因一次意外相遇，从此开启了一段充满欢笑与泪水的旅程。��们将在彼此的世界中发现真正的自我。' },
-        { title: '破晓之刃', description: '末世降临，文明崩塌。一位失去记忆的少年在废墟中醒来，手中握着一把散发微光的古剑。为了找回过去的真相，他踏上了穿越危险地带的冒险之旅。' },
-        { title: '云端食堂', description: '退休大厨老张意外获得了一间悬浮在云端的神秘食堂。每道菜都能唤醒食客尘封的记忆。温暖治愈的美食故事，讲述人间烟火中的点滴感动。' },
+        { title: '星辰之约', description: '在繁华都市的霓虹灯下，两个看似毫无交集的灵魂因一次意外相遇，从此开启了一段充满欢笑与泪水的旅程。他们将在彼此的世界中发现真正的自我。' },
+        { title: '破晓之刃', description: '末世降临，文明崩塌。一位失去记忆的少年在��墟中醒来，手中握着一把散发微光的古剑。为了找回过去的真相，他踏上了穿越危险地带的冒险之旅。' },
+        { title: '云端食堂', description: '退休大厨老张意外获得了一间悬浮在云端的神秘食堂。每道菜都能唤醒食客尘封的记忆。温暖治愈的美食故事，讲述人间烟火中的点滴��动。' },
         { title: '代码恋人', description: '天才女程序员在调试AI系统时，意外激活了一个拥有情感的虚拟人格。当虚拟与现实的界限开始模糊，一段跨越次元的爱情悄然萌芽。' },
         { title: '龙族传承', description: '少年林枫在祖传玉佩中发现了通往修仙界的秘密。拜入仙门后，他发现自己竟是远古龙族的后裔，一场关乎三界存亡的大战即将来临。' },
       ];
@@ -1383,7 +1281,7 @@ app.post(`${PREFIX}/series/generate-basic-info`, async (c) => {
   }
 });
 
-// ==================== AI生成故事大纲（必须在 series/:id 之前注册） ====================
+// ==================== [F] AI生成故事大纲（必须在 series/:id 之前注册） ====================
 
 app.post(`${PREFIX}/series/generate-outline`, async (c) => {
   try {
@@ -1473,7 +1371,7 @@ app.post(`${PREFIX}/series/generate-outline`, async (c) => {
   }
 });
 
-// ==================== 漫剧详情 ====================
+// ==================== [F] 漫剧详情 ====================
 
 app.get(`${PREFIX}/series/:id`, async (c) => {
   try {
@@ -1521,8 +1419,31 @@ app.get(`${PREFIX}/series/:id`, async (c) => {
       ),
     ]);
 
-    const { data: characters, error: charErr } = charResult;
+    const { data: rawCharacters, error: charErr } = charResult;
     if (charErr) console.warn('[Series] Characters query failed:', truncateErrorMsg(charErr));
+    // v6.0.176: 去重——按name去重，保留最新记录（created_at DESC已由order保证升序，取最后出现的）
+    const characters = (() => {
+      const raw = rawCharacters || [];
+      if (raw.length <= 1) return raw;
+      const seen = new Map<string, any>();
+      for (const ch of raw) {
+        seen.set(ch.name, ch); // 后出现的覆盖先出现的（同名保留最新）
+      }
+      if (seen.size < raw.length) {
+        console.warn(`[Series] Deduplicated characters: ${raw.length} → ${seen.size} (series ${seriesId})`);
+        // 异步清理DB中的重复行（不阻塞响应）
+        const keepIds = new Set(Array.from(seen.values()).map((ch: any) => ch.id));
+        const dupeIds = raw.filter((ch: any) => !keepIds.has(ch.id)).map((ch: any) => ch.id);
+        if (dupeIds.length > 0) {
+          supabase.from('series_characters').delete().in('id', dupeIds)
+            .then(({ error: delErr }) => {
+              if (delErr) console.warn('[Series] Failed to clean duplicate characters:', delErr.message);
+              else console.log(`[Series] ✅ Cleaned ${dupeIds.length} duplicate character rows for series ${seriesId}`);
+            });
+        }
+      }
+      return Array.from(seen.values());
+    })();
     const { data: episodes, error: epErr } = epResult;
     if (epErr) console.warn('[Series] Episodes query failed:', truncateErrorMsg(epErr));
     const { data: storyboards, error: sbErr } = sbResult;
@@ -1572,7 +1493,7 @@ app.get(`${PREFIX}/series/:id`, async (c) => {
   }
 });
 
-// ==================== 创建漫剧 ====================
+// ==================== [F] 创建漫剧 ====================
 
 app.post(`${PREFIX}/series`, async (c) => {
   try {
@@ -1591,7 +1512,10 @@ app.post(`${PREFIX}/series`, async (c) => {
         const _ptKey = body.productionType || body.production_type || 'short_drama';
         const _ptLabel = (PRODUCTION_TYPE_PROMPTS[_ptKey] || PRODUCTION_TYPE_PROMPTS.short_drama).label;
         console.log(`[Series] One-click mode: auto-generating title/description, prodType=${_ptKey}`);
-        const genPrompt = `你是专业${_ptLabel}策划。用户的创意："${storyOutline}"
+        const genPrompt = `你是专业${_ptLabel}策划。用户的创意：\"${storyOutline}\"
+根据这段描述生成：1.吸引人的${_ptLabel}标题（2-8字）2.精彩简介（50-100字，体现${_ptLabel}专业质感）3.类型（romance/suspense/comedy/action/fantasy/horror/scifi/drama之一）
+严格按JSON格式回复（不要markdown标记）：{\"title\":\"标题\",\"description\":\"简介\",\"genre\":\"类型\"}`;
+        void `你是专业${_ptLabel}策划。用户的创意："${storyOutline}"
 根据这段描述生成：1.吸引人的${_ptLabel}标题（2-8字）2.精彩简介（50-100字，体现${_ptLabel}专业质感）3.类型（romance/suspense/comedy/action/fantasy/horror/scifi/drama之一）
 严格按JSON格式回复（不要markdown标记）：{"title":"标题","description":"简介","genre":"类型"}`;
 
@@ -1621,7 +1545,7 @@ app.post(`${PREFIX}/series`, async (c) => {
       }
     }
 
-    // 最终兜底：确保 title 不为��
+    // 最终兜底：确保 title 不为空
     if (!enrichedBody.title || !enrichedBody.title.trim()) {
       const fallbackTitles = ['光影之间', '星辰序曲', '浮生如梦', '风起云涌', '心之所向', '破晓时分'];
       enrichedBody.title = fallbackTitles[Math.floor(Math.random() * fallbackTitles.length)];
@@ -1663,7 +1587,7 @@ app.post(`${PREFIX}/series`, async (c) => {
     };
     delete dbBody.is_public;
 
-    // v6.0.78: 视��分辨率存入coherence_check（保证同一剧所有分镜一致）
+    // v6.0.78: 视频分辨率存入coherence_check（保证同一剧所有分镜一致）
     if (body.resolution) {
       dbBody.coherence_check = {
         ...(dbBody.coherence_check || {}),
@@ -1672,7 +1596,7 @@ app.post(`${PREFIX}/series`, async (c) => {
     }
     delete dbBody.resolution;
 
-    // v6.0.79: 视频比例存入coherence_check（同一剧全部分镜保持一致比例）
+    // v6.0.79: 视频比例存入coherence_check（同一���全部分镜保持一致比例）
     if (body.aspectRatio) {
       dbBody.coherence_check = {
         ...(dbBody.coherence_check || {}),
@@ -1703,7 +1627,7 @@ app.post(`${PREFIX}/series`, async (c) => {
   }
 });
 
-// ==================== 更新漫剧 ====================
+// ==================== [F] 更新漫剧 ====================
 
 app.put(`${PREFIX}/series/:id`, async (c) => {
   try {
@@ -1792,7 +1716,7 @@ app.put(`${PREFIX}/series/:id`, async (c) => {
   }
 });
 
-// ==================== 删除漫剧 ====================
+// ==================== [F] 删除漫剧 ====================
 // v6.0.5: 级联清理 — 删除系列时同步取消视频任务 + 清理所有关联数据
 
 app.delete(`${PREFIX}/series/:id`, async (c) => {
@@ -1813,25 +1737,18 @@ app.delete(`${PREFIX}/series/:id`, async (c) => {
       console.log(`[Delete] ✅ Cancelled ${cancelledTasks?.length || 0} active video tasks`);
     }
 
-    // 2. 删除分镜
-    const { error: sbErr } = await supabase.from('series_storyboards').delete().eq('series_id', seriesId);
-    if (sbErr) console.warn(`[Delete] Warning: delete storyboards failed: ${sbErr.message}`);
-
-    // 3. 删除���集
-    const { error: epErr } = await supabase.from('series_episodes').delete().eq('series_id', seriesId);
-    if (epErr) console.warn(`[Delete] Warning: delete episodes failed: ${epErr.message}`);
-
-    // 4. 删除角色
-    const { error: charErr } = await supabase.from('series_characters').delete().eq('series_id', seriesId);
-    if (charErr) console.warn(`[Delete] Warning: delete characters failed: ${charErr.message}`);
-
-    // 5. v6.0.8: 清理互动数据（likes、comments、viewing_history）——防止孤儿记录
-    // likes/comments 使用 work_id = seriesId 关联
-    const [{ error: likesErr }, { error: commentsErr }, { error: viewHistErr }] = await Promise.all([
+    // 2-5. v6.0.175: parallelize all independent cascade deletes (was sequential waterfall)
+    const [{ error: sbErr }, { error: epErr }, { error: charErr }, { error: likesErr }, { error: commentsErr }, { error: viewHistErr }] = await Promise.all([
+      supabase.from('series_storyboards').delete().eq('series_id', seriesId),
+      supabase.from('series_episodes').delete().eq('series_id', seriesId),
+      supabase.from('series_characters').delete().eq('series_id', seriesId),
       supabase.from('likes').delete().eq('work_id', seriesId),
       supabase.from('comments').delete().eq('work_id', seriesId),
       supabase.from('viewing_history').delete().eq('series_id', seriesId),
     ]);
+    if (sbErr) console.warn(`[Delete] Warning: delete storyboards failed: ${sbErr.message}`);
+    if (epErr) console.warn(`[Delete] Warning: delete episodes failed: ${epErr.message}`);
+    if (charErr) console.warn(`[Delete] Warning: delete characters failed: ${charErr.message}`);
     if (likesErr) console.warn(`[Delete] Warning: delete likes failed: ${likesErr.message}`);
     if (commentsErr) console.warn(`[Delete] Warning: delete comments failed: ${commentsErr.message}`);
     if (viewHistErr) console.warn(`[Delete] Warning: delete viewing_history failed: ${viewHistErr.message}`);
@@ -1852,7 +1769,7 @@ app.delete(`${PREFIX}/series/:id`, async (c) => {
 //  [D] 社区 & 互动 — 社区作品 / 用户作品 / 点赞 / 评论 / 分享
 // ------------------------------------------------------------------
 
-// ==================== 社区作品 ====================
+// ==================== [G] 社区作品 ====================
 
 app.get(`${PREFIX}/community/works`, async (c) => {
   try {
@@ -1909,26 +1826,13 @@ app.get(`${PREFIX}/community/works`, async (c) => {
     const works = tasks
       .filter((task: any) => task.video_url && task.video_url.trim() !== '')
       .filter((task: any) => {
-        // v6.0.19: 过滤掉属于漫剧系列的分镜视频（它们通过SeriesCard展示，不应作为独立作品散乱出现）
-        if (task.generation_metadata) {
-          try {
-            const meta = typeof task.generation_metadata === 'string'
-              ? JSON.parse(task.generation_metadata) : task.generation_metadata;
-            if (meta?.seriesId) return false;
-          } catch { /* ignore */ }
-        }
-        return true;
+        // v6.0.19: 过滤掉属于漫剧系列的分镜视频
+        const meta = parseMeta(task.generation_metadata);
+        return !meta?.seriesId;
       })
       .map((task: any) => {
         const user = usersMap.get(task.user_phone);
-        let metadata: any = null;
-        if (task.generation_metadata) {
-          try {
-            metadata = typeof task.generation_metadata === 'string'
-              ? JSON.parse(task.generation_metadata)
-              : task.generation_metadata;
-          } catch (e: any) { console.warn('[Community] metadata parse failed:', e.message); }
-        }
+        const metadata = parseMeta(task.generation_metadata);
         return {
           id: task.task_id,
           taskId: task.task_id,
@@ -1936,7 +1840,6 @@ app.get(`${PREFIX}/community/works`, async (c) => {
           username: user?.nickname || '匿名用户',
           userAvatar: user?.avatar_url || '',
           videoUrl: task.video_url,
-          // v6.0.19: thumbnail仅使用实际缩略图，不再用视频URL冒充
           thumbnail: task.thumbnail || '',
           prompt: task.prompt,
           style: task.style,
@@ -1955,7 +1858,7 @@ app.get(`${PREFIX}/community/works`, async (c) => {
   }
 });
 
-// ==================== 用户作品 ====================
+// ==================== [G] 用户作品 ====================
 
 // 获取指定用户的作品列表
 app.get(`${PREFIX}/community/user/:phone/works`, async (c) => {
@@ -2000,14 +1903,8 @@ app.get(`${PREFIX}/community/user/:phone/works`, async (c) => {
     // v6.0.19: 过滤掉属于漫剧系列的分镜视频 + 修复thumbnail
     const works = tasks
       .filter((task: any) => {
-        if (task.generation_metadata) {
-          try {
-            const meta = typeof task.generation_metadata === 'string'
-              ? JSON.parse(task.generation_metadata) : task.generation_metadata;
-            if (meta?.seriesId) return false;
-          } catch { /* ignore */ }
-        }
-        return true;
+        const meta = parseMeta(task.generation_metadata);
+        return !meta?.seriesId;
       })
       .map((task: any) => ({
         id: task.task_id,
@@ -2052,7 +1949,7 @@ app.delete(`${PREFIX}/community/user/:phone/works/:taskId`, async (c) => {
   }
 });
 
-// ==================== 互动功能 ====================
+// ==================== [G] 互动功能 ====================
 
 app.post(`${PREFIX}/series/:id/like`, async (c) => {
   try {
@@ -2109,7 +2006,7 @@ app.post(`${PREFIX}/series/:id/comment`, async (c) => {
       .select()
       .single();
     if (error) return c.json({ error: error.message }, 500);
-    // v6.0.26: 移除comments_count反规范化更新（series表无此列），评论数通过comments��实时count
+    // v6.0.26: 移除comments_count反规范化更新（series表无此列），评论数通过comments表实时count
     return c.json({ success: true, data: toCamelCase(data) });
   } catch (error: any) {
     console.error('[POST /series/:id/comment] Error:', error?.message);
@@ -2143,7 +2040,7 @@ app.post(`${PREFIX}/series/:id/share`, async (c) => {
 //  [E] 内容管理 — 角色 / AI角色 / 剧集 / 分镜 / 视频任务
 // ------------------------------------------------------------------
 
-// ==================== 角色操作 ====================
+// ==================== [H] 角色操作 ====================
 
 app.get(`${PREFIX}/series/:id/characters`, async (c) => {
   try {
@@ -2225,7 +2122,7 @@ app.delete(`${PREFIX}/series/:id/characters/:charId`, async (c) => {
   }
 });
 
-// ==================== AI智能生成角色 v5.4.1 ====================
+// ==================== [H] AI智能生成角色 v5.4.1 ====================
 
 app.post(`${PREFIX}/series/:id/ai-generate-characters`, async (c) => {
   try {
@@ -2239,11 +2136,11 @@ app.post(`${PREFIX}/series/:id/ai-generate-characters`, async (c) => {
     let characterRows: any[] = [];
 
     if (VOLCENGINE_API_KEY || ALIYUN_BAILIAN_API_KEY) {
-      const charPrompt = `你是一位专业的漫剧编剧。请根据以下信息，为漫剧创作3-5个主要角色。\n\n漫剧标题：${series.title}\n剧集简介：${series.description || '未提供'}\n${series.genre ? `类型：${series.genre}` : ''}\n${series.theme ? `主题：${series.theme}` : ''}\n${series.story_outline ? `故事大纲：${(series.story_outline || '').substring(0, 500)}` : ''}\n\n请严格按以下JSON格式回复（不要包��markdown标记），返回一个数组：\n[{"name":"角色名","role":"protagonist|supporting|antagonist","description":"角色背景描述(30-50字)","appearance":"外貌特征(30-50字，包含年龄、发型、服装等)","personality":"性格特征(10-20字)"}]\n\n要求：\n1. 必须有1个protagonist（主角），1-2个supporting（配角），可选1个antagonist（反派）\n2. 角色之间要有关联和互动关系\n3. 外貌描述要具体，便于AI绘图\\n4. 【重要】角色的名字、职业、背景必须与漫剧标题「${series.title}」和简介匹配，禁止创作与主题无关的角色`;
+      const charPrompt = `你是一位专业的漫剧编剧。请根据以下信息，为漫剧创作3-5个主要角色。\n\n漫剧标题：${series.title}\n剧集简介：${series.description || '未提供'}\n${series.genre ? `类型：${series.genre}` : ''}\n${series.theme ? `主题：${series.theme}` : ''}\n${series.story_outline ? `故事大纲：${(series.story_outline || '').substring(0, 500)}` : ''}\n\n请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：\n[{"name":"角色名","role":"protagonist|supporting|antagonist","description":"角色背景描述(30-50字)","appearance":"外貌特征(30-50字，包含年龄、发型、服装等)","personality":"性格特征(10-20字)"}]\n\n要求：\n1. 必须有1个protagonist（主角），1-2个supporting（配角），可选1个antagonist（反派）\n2. 角色之间要有关联和互动关系\n3. 外貌描述要具体，便于AI绘图\\n4. 【重要】角色的名字、职业、背景必须与漫剧标题「${series.title}��和简介匹配，禁止创作与主题无关的角色`;
 
       console.log(`[AI] ai-generate-characters: calling AI for series ${seriesId}`);
       // v6.0.84: 独立角色生成prompt同步升级——description 80-120字、personality 30-50字、新增relationships
-      const charPromptFixed = `你是一位专业的漫剧编剧。请根据以下信息，为漫剧创作3-5个主要角色。\n\n漫剧标题：${series.title}\n剧集简介：${series.description || '未提供'}\n${series.genre ? `类型：${series.genre}` : ''}\n${series.theme ? `主题：${series.theme}` : ''}\n${series.story_outline ? `故事大纲：${(series.story_outline || '').substring(0, 500)}` : ''}\n\n请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：\n[{"name":"角色名","role":"protagonist|supporting|antagonist","description":"角色背景故事(80-120字,含职业/家庭背景/人生关键经历/核心动机/内心矛盾/性格成因)","appearance":"外貌特征(50-80字,必须包含年龄、身高体型、发型发色、面部五官特征、标志性服装配饰)","personality":"性格特征与说话风格(30-50���,含性格标签+说话习惯+口头禅+情绪表达方式)","relationships":"与其他角色的关系(20-40字,如与XX是青梅竹马/暗恋XX/与XX有仇怨)"}]\n\n要求：\n1. 必须有1个protagonist（主角），1-2个supporting（配角），可选1个antagonist（反派）\n2. 角色之间要有关联和互动关系\n3. 外貌描述要具体，便于AI绘图\n4. 【重要】角色的名字、职业、背景必须与漫剧标题「${series.title}」和简介匹配，禁止创作与主题无关的角色\n5. 【外貌细节必填】appearance字段必须包含：具体年龄、五官特征(如瓜子脸/丹凤眼)、发型发色(如齐肩黑色长发)、身材体型(如身材修长172cm)、标志性服饰(如常穿白色连衣裙)，每个角色外貌描述至少40字\n6. 【中国审美】人物面容精致优美、五官端正比例协调、气质自然大方，符合中国观众审美偏好\n7. 【视觉区分度】不同角色的发型/发色/服饰风格/体型必须有明显区分，确保AI绘图时能清晰辨别���同角色`;
+      const charPromptFixed = `你是一位专业的漫剧编剧。请根据以下信息，为漫剧创作3-5个主要角色。\n\n漫剧标题：${series.title}\n剧集简介：${series.description || '未提供'}\n${series.genre ? `类型：${series.genre}` : ''}\n${series.theme ? `主题：${series.theme}` : ''}\n${series.story_outline ? `故事大纲：${(series.story_outline || '').substring(0, 500)}` : ''}\n\n请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：\n[{"name":"角色名","role":"protagonist|supporting|antagonist","description":"角色背景故事(80-120字,含职业/家庭背景/人生关键经历/核心动机/内心矛盾/性格成因)","appearance":"外貌特征(50-80字,必须包含年龄、身高体型、发型发色、面部五官特征、标志性服装配饰)","personality":"性格特征与说话风格(30-50字,含性格标签+说话习惯+口头禅+情绪表达方式)","relationships":"与其他角色的关系(20-40字,如与XX是青梅竹马/暗恋XX/与XX有仇怨)"}]\n\n要求：\n1. 必须有1个protagonist（主角），1-2个supporting（配角），可选1个antagonist（反派）\n2. 角色之间要有关联和互动关系\n3. 外貌描述要具体，便于AI绘图\n4. 【重要】角色的名字、职业、背景必须与漫剧标题「${series.title}」和简介匹配，禁止创作与主题无关的角色\n5. 【外貌细节必填】appearance字段必须包含：具体年龄、五官特征(如瓜子脸/丹凤眼)、发型发色(如齐肩黑色长发)、身材体型(如身材修长172cm)、标志性服饰(如常穿白色连衣裙)，每个角色外貌描述至少40字\n6. 【中国审美】人物面容精致优美、五官端正比例协调、气质自然大方，符合中国观众审美偏好\n7. 【视觉区分度】不同角色的发型/发色/服饰风格/体型必须有明显区分，确保AI绘图时能清晰辨别不同角色`;
       try {
         // v6.0.19: callAI 多模型路由（medium tier — 角色设计）
         const aiResult = await callAI({
@@ -2292,7 +2189,7 @@ app.post(`${PREFIX}/series/:id/ai-generate-characters`, async (c) => {
       characterRows = [
         { series_id: seriesId, name: '主角', role: 'protagonist', description: '故事的主人公', appearance: '20岁左右，精神饱满，目光坚定', personality: '勇敢、坚韧、善良' },
         { series_id: seriesId, name: '挚友', role: 'supporting', description: '主角最信任的伙伴', appearance: '与主角同龄，性格开朗', personality: '忠诚、幽默、热心' },
-        { series_id: seriesId, name: '导师', role: 'supporting', description: '引导主角成长的���者', appearance: '中年人，气质沉稳', personality: '睿智、严厉、关怀' },
+        { series_id: seriesId, name: '导师', role: 'supporting', description: '引导主角成长的智者', appearance: '中年人，气质沉稳', personality: '睿智、严厉、关怀' },
       ];
     }
 
@@ -2308,7 +2205,7 @@ app.post(`${PREFIX}/series/:id/ai-generate-characters`, async (c) => {
   }
 });
 
-// ==================== 剧集操作 ====================
+// ==================== [H] 剧集操作 ====================
 
 app.get(`${PREFIX}/series/:id/episodes`, async (c) => {
   try {
@@ -2327,7 +2224,7 @@ app.get(`${PREFIX}/series/:id/episodes`, async (c) => {
   }
 });
 
-// ==================== 分镜操作 ====================
+// ==================== [H] 分镜操作 ====================
 
 app.get(`${PREFIX}/series/:seriesId/episodes/:episodeId/storyboards`, async (c) => {
   try {
@@ -2364,6 +2261,17 @@ app.patch(`${PREFIX}/series/:seriesId/storyboards/:sbId`, async (c) => {
     if (body.thumbnailUrl !== undefined) updates.thumbnail_url = body.thumbnailUrl;
     if (body.status !== undefined) updates.status = body.status;
     if (body.imageUrl !== undefined) updates.image_url = body.imageUrl;
+    // v6.0.167: 支持更新 scene_number（拖拽排序持久化）
+    if (body.sceneNumber !== undefined) updates.scene_number = body.sceneNumber;
+    // v6.0.169: 支持更新分镜内容字段（编辑对话框持久化）
+    if (body.description !== undefined) updates.description = body.description;
+    if (body.dialogue !== undefined) updates.dialogue = body.dialogue;
+    if (body.characters !== undefined) updates.characters = body.characters;
+    if (body.location !== undefined) updates.location = body.location;
+    if (body.timeOfDay !== undefined) updates.time_of_day = body.timeOfDay;
+    if (body.cameraAngle !== undefined) updates.camera_angle = body.cameraAngle;
+    if (body.duration !== undefined) updates.duration = body.duration;
+    if (body.emotionalTone !== undefined) updates.emotional_tone = body.emotionalTone;
 
     const { data, error } = await supabase.from('series_storyboards')
       .update(updates).eq('id', sbId).eq('series_id', seriesId).select().single();
@@ -2388,7 +2296,232 @@ app.patch(`${PREFIX}/series/:seriesId/storyboards/:sbId`, async (c) => {
   }
 });
 
-// ==================== 视频任务 ====================
+// v6.0.169: 创建单个分镜
+app.post(`${PREFIX}/series/:seriesId/storyboards`, async (c) => {
+  try {
+    const seriesId = c.req.param('seriesId');
+    const body = await c.req.json();
+    const row: any = {
+      series_id: seriesId,
+      episode_number: body.episodeNumber,
+      scene_number: body.sceneNumber || 1,
+      description: body.description || '',
+      dialogue: body.dialogue || '',
+      characters: body.characters || [],
+      location: body.location || '',
+      time_of_day: body.timeOfDay || '',
+      camera_angle: body.cameraAngle || '中景',
+      duration: body.duration || 10,
+      emotional_tone: body.emotionalTone || '',
+      status: body.status || 'draft',
+    };
+    console.log(`[POST /storyboards] seriesId=${seriesId}, ep=${row.episode_number}, scene=${row.scene_number}`);
+    const { data, error } = await supabase.from('series_storyboards')
+      .insert(row).select().single();
+    if (error) {
+      console.error(`[POST /storyboards] Error:`, error.message);
+      return c.json({ success: false, error: error.message }, 500);
+    }
+    return c.json({ success: true, data: toCamelCase(data) });
+  } catch (error: any) {
+    console.error('[POST /storyboards] Error:', error?.message);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// v6.0.167: 批量重排分镜 scene_number（拖拽排序持久化）
+app.post(`${PREFIX}/series/:seriesId/reorder-storyboards`, async (c) => {
+  try {
+    const seriesId = c.req.param('seriesId');
+    const body = await c.req.json();
+    const items: Array<{ id: string; sceneNumber: number }> = body.items;
+    if (!Array.isArray(items) || items.length === 0) {
+      return c.json({ success: false, error: 'items array is required' }, 400);
+    }
+    console.log(`[POST /reorder-storyboards] seriesId=${seriesId}, ${items.length} items`);
+
+    // 并行更新所有分镜的 scene_number
+    const results = await Promise.allSettled(
+      items.map(({ id, sceneNumber }) =>
+        supabase.from('series_storyboards')
+          .update({ scene_number: sceneNumber, updated_at: new Date().toISOString() })
+          .eq('id', id)
+          .eq('series_id', seriesId)
+      )
+    );
+    const failCount = results.filter(r => r.status === 'rejected').length;
+    if (failCount > 0) {
+      console.warn(`[POST /reorder-storyboards] ${failCount}/${items.length} updates failed`);
+    }
+    return c.json({ success: true, updated: items.length - failCount, failed: failCount });
+  } catch (error: any) {
+    console.error('[POST /reorder-storyboards] Error:', error?.message);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// v6.0.168: 删除单个分镜
+app.delete(`${PREFIX}/series/:seriesId/storyboards/:sbId`, async (c) => {
+  try {
+    const seriesId = c.req.param('seriesId');
+    const sbId = c.req.param('sbId');
+    console.log(`[DELETE /storyboards] seriesId=${seriesId}, sbId=${sbId}`);
+    const { error } = await supabase.from('series_storyboards')
+      .delete().eq('id', sbId).eq('series_id', seriesId);
+    if (error) {
+      console.error(`[DELETE /storyboards] Error:`, error.message);
+      return c.json({ success: false, error: error.message }, 500);
+    }
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.error('[DELETE /storyboards] Error:', error?.message);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// v6.0.168: 批量删除分镜
+app.post(`${PREFIX}/series/:seriesId/delete-storyboards`, async (c) => {
+  try {
+    const seriesId = c.req.param('seriesId');
+    const body = await c.req.json();
+    const ids: string[] = body.ids;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return c.json({ success: false, error: 'ids array is required' }, 400);
+    }
+    console.log(`[POST /delete-storyboards] seriesId=${seriesId}, ${ids.length} ids`);
+    const { error } = await supabase.from('series_storyboards')
+      .delete().in('id', ids).eq('series_id', seriesId);
+    if (error) {
+      console.error(`[POST /delete-storyboards] Error:`, error.message);
+      return c.json({ success: false, error: error.message }, 500);
+    }
+    return c.json({ success: true, deleted: ids.length });
+  } catch (error: any) {
+    console.error('[POST /delete-storyboards] Error:', error?.message);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// v6.0.171: AI润色分镜描述——增强场景描述的文学性和视觉化表达
+app.post(`${PREFIX}/series/:seriesId/storyboards/polish`, async (c) => {
+  try {
+    const seriesId = c.req.param('seriesId');
+    const body = await c.req.json();
+    const { description, dialogue, characters: charNames, location, timeOfDay, cameraAngle, seriesTitle, seriesStyle, mode } = body;
+
+    if (!description || description.trim().length < 5) {
+      return c.json({ success: false, error: '场景描述过短，至少需要5个字符' }, 400);
+    }
+
+    console.log(`[POST /storyboards/polish] seriesId=${seriesId}, mode=${mode || 'full'}, desc=${description.substring(0, 50)}...`);
+
+    if (!VOLCENGINE_API_KEY && !ALIYUN_BAILIAN_API_KEY) {
+      return c.json({ success: false, error: 'AI服务未配置' }, 503);
+    }
+
+    const ctxParts: string[] = [];
+    if (seriesTitle) ctxParts.push(`作品标题：${seriesTitle}`);
+    if (seriesStyle) ctxParts.push(`视觉风格：${seriesStyle}`);
+    if (location) ctxParts.push(`场景位置：${location}`);
+    if (timeOfDay) ctxParts.push(`时间段：${timeOfDay}`);
+    if (cameraAngle) ctxParts.push(`镜头角度：${cameraAngle}`);
+    if (charNames && charNames.length > 0) ctxParts.push(`出场角色：${charNames.join('、')}`);
+    const contextBlock = ctxParts.length > 0 ? `\n【场景上下文】\n${ctxParts.join('\n')}\n` : '';
+
+    const polishMode = mode || 'full'; // full | description_only | dialogue_only
+    let prompt = '';
+
+    if (polishMode === 'dialogue_only') {
+      prompt = `你是一位专业的影视编剧，擅长写出富有感染力和角色辨识度的台词。
+
+请对以下分镜对白进行润色升级，使其更加自然、富有表现力和角色个性。
+${contextBlock}
+【原始场景描述】
+${description}
+
+【原始对白】
+${dialogue || '（无对白）'}
+
+【润色要求】
+1. 台词要简洁有力，符合口语习惯，避免书面化
+2. 体现角色性格和当时情绪状态
+3. 加入适当的语气词、停顿或潜台词暗示
+4. 如果原始无对白，根据场景描述创作1-2句合适的台词
+5. 输出纯台词文本（不要角色名前缀），40字以内
+
+请直接输出润色后的对白，不要解释：`;
+    } else {
+      const needDialogue = polishMode === 'full' && dialogue;
+      prompt = `你是一位专业的分镜脚本编剧和视觉叙事专家，擅长将粗糙的场景描述升级为电影级分镜脚本。
+
+请对以下分镜描述进行深度润色，使其成为AI视频生成的理想输入——既有文学性又有精确的视觉指导。
+${contextBlock}
+【原始场景描述】
+${description}
+${needDialogue ? `\n【原始对白】\n${dialogue}` : ''}
+
+【润色要求——场景描述】
+1. 描述必须是「视觉化」的——读者能在脑海中准确「看到」画面
+2. 包含关键视觉元素：光线/色彩基调、空间纵深、人物姿态/表情、环境细节
+3. 使用电影语言：镜头运动暗示（如"镜头缓缓推进"）、景深描述、构图意识
+4. 加入感官细节（风吹过发丝、雨滴落在窗台上等）增强沉浸感
+5. 保持60-100字，简练但信息密集，禁止空泛描述
+6. 保留原始描述的核心叙事和情感基调，增强而非改变
+${needDialogue ? `
+【润色要求——对白】
+7. 台词简洁有力，体现角色性格和情绪
+8. 加入语气词或潜台词暗示增加层次
+9. 40字以内` : ''}
+
+请严格按以下JSON格式回复（不要markdown标记）：
+${needDialogue
+  ? '{"description":"润色后的场景描述","dialogue":"润色后的对白"}'
+  : '{"description":"润色后的场景描述"}'}`;
+    }
+
+    const aiResult = await callAI({
+      messages: [{ role: 'user', content: prompt }],
+      tier: 'light',
+      temperature: 0.85,
+      max_tokens: 500,
+      timeout: 30000,
+    });
+
+    console.log(`[POST /storyboards/polish] AI(${aiResult.model}): ${aiResult.content.substring(0, 100)}...`);
+
+    let polished: { description?: string; dialogue?: string } = {};
+
+    if (polishMode === 'dialogue_only') {
+      polished = { dialogue: aiResult.content.trim().replace(/^["「『]|["」』]$/g, '') };
+    } else {
+      const jsonMatch = aiResult.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          polished = JSON.parse(jsonMatch[0]);
+        } catch {
+          polished = { description: aiResult.content.trim() };
+        }
+      } else {
+        polished = { description: aiResult.content.trim() };
+      }
+    }
+
+    if (polished.description) {
+      polished.description = polished.description.replace(/```[\s\S]*?```/g, '').trim();
+      if (polished.description.length < 10) polished.description = undefined;
+    }
+    if (polished.dialogue) {
+      polished.dialogue = polished.dialogue.replace(/```[\s\S]*?```/g, '').replace(/^["「『]|["」』]$/g, '').trim();
+    }
+
+    return c.json({ success: true, data: polished, model: aiResult.model });
+  } catch (error: any) {
+    console.error('[POST /storyboards/polish] Error:', error?.message);
+    return c.json({ success: false, error: error.message || '润色失败' }, 500);
+  }
+});
+
+// ==================== [I] 视频任务 ====================
 
 app.get(`${PREFIX}/video-tasks`, async (c) => {
   try {
@@ -2427,7 +2560,7 @@ app.get(`${PREFIX}/video-tasks/:taskId`, async (c) => {
   }
 });
 
-// ==================== 浏览历史 ====================
+// ==================== [I] 浏览历史 ====================
 
 app.post(`${PREFIX}/series/:id/viewing-history`, async (c) => {
   try {
@@ -2477,7 +2610,7 @@ app.get(`${PREFIX}/series/:id/viewing-history`, async (c) => {
   }
 });
 
-// ==================== 数据库健康检查 ====================
+// ==================== [I] 数据库健康检查 ====================
 
 app.get(`${PREFIX}/db-health`, async (c) => {
   try {
@@ -2498,7 +2631,7 @@ app.get(`${PREFIX}/db-health`, async (c) => {
 //  [G] 视频管道 — 分镜视频生成 / 合并视频 / AI创意生成
 // ------------------------------------------------------------------
 
-// ==================== 漫剧分镜视频生成（简化版） ====================
+// ==================== [J] 漫剧分镜视频生成（简化版） ====================
 
 app.post(`${PREFIX}/series/:seriesId/episodes/:episodeNumber/storyboards/:sceneNumber/generate-video`, async (c) => {
   try {
@@ -2541,14 +2674,14 @@ app.post(`${PREFIX}/series/:seriesId/episodes/:episodeNumber/storyboards/:sceneN
   }
 });
 
-// ==================== 漫剧合并视频（虚拟播放列表方式） ====================
+// ==================== [J] 漫剧合并视频（虚拟播放列表方式） ====================
 
 // 旧路由保留兼容
 app.post(`${PREFIX}/series/:seriesId/episodes/:episodeId/merge`, async (c) => {
   try {
     const seriesId = c.req.param('seriesId');
     const episodeId = c.req.param('episodeId');
-    // 查剧集获取 episode_number
+    // 从剧集获取 episode_number
     const { data: ep } = await supabase.from('series_episodes').select('episode_number').eq('id', episodeId).maybeSingle();
     if (!ep) return c.json({ success: false, error: '剧集不存在' }, 404);
     const { data: storyboards } = await supabase
@@ -2652,29 +2785,85 @@ app.post(`${PREFIX}/episodes/:episodeId/merge-videos`, async (c) => {
 
     console.log(`[MergeVideos] 🎬 Downloading ${videos.length} segments for MP4 merge...`);
 
+    // v6.0.182: Pre-download URL refresh — resolve expired TOS signed URLs before download
+    // Root cause: previously retried same expired TOS URL 3 times (always 403), wasting 3×60s
+    // Fix: check DB for OSS alternatives + generate presigned URLs for reliable server-side fetch
+    for (const v of videos as any[]) {
+      const url = v.url as string;
+      const isTos = url.includes('volces.com') || url.includes('tos-cn');
+
+      if (isTos) {
+        // TOS signed URL likely expired — look for OSS alternative in DB
+        const { data: sbRow } = await supabase.from('series_storyboards')
+          .select('video_url').eq('series_id', episode.series_id)
+          .eq('episode_number', episode.episode_number).eq('scene_number', v.sceneNumber).maybeSingle();
+        const dbUrl = (sbRow?.video_url || '').trim();
+        if (dbUrl && dbUrl !== url && dbUrl.startsWith('http') && !dbUrl.includes('volces.com') && !dbUrl.includes('tos-cn')) {
+          console.log(`[MergeVideos] 🔄 Scene ${v.sceneNumber}: refreshed TOS→DB URL (${dbUrl.includes('.aliyuncs.com') ? 'OSS' : 'other'})`);
+          v.url = dbUrl;
+        } else {
+          // Fallback: check video_tasks for OSS URL
+          const { data: taskRows } = await supabase.from('video_tasks')
+            .select('video_url, generation_metadata').eq('status', 'completed')
+            .filter('generation_metadata->>seriesId', 'eq', episode.series_id)
+            .like('video_url', '%aliyuncs.com%');
+          if (taskRows) {
+            for (const t of taskRows) {
+              const m = t.generation_metadata;
+              if (m?.episodeNumber === episode.episode_number &&
+                  (m?.storyboardNumber === v.sceneNumber || m?.sceneNumber === v.sceneNumber) && t.video_url) {
+                console.log(`[MergeVideos] 🔄 Scene ${v.sceneNumber}: refreshed TOS→task OSS URL`);
+                v.url = t.video_url;
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      // Generate presigned GET URL for OSS URLs (bypasses CORS/permission issues)
+      if (v.url.includes('.aliyuncs.com') && isOSSConfigured()) {
+        try {
+          const urlObj = new URL(v.url);
+          const objectKey = urlObj.pathname.startsWith('/') ? urlObj.pathname.slice(1) : urlObj.pathname;
+          if (objectKey) v.presignedUrl = await generatePresignedGetUrl(objectKey, 7200);
+        } catch (e: any) {
+          console.warn(`[MergeVideos] presignedGetUrl failed for scene ${v.sceneNumber}: ${e.message}`);
+        }
+      }
+    }
+
     // v6.0.65: 顺序下载 + 重试 + validSceneNumbers追踪（修复skippedSegments→场景号映射缺失）
+    // v6.0.182: Try presigned URL first, then original URL, then retry presigned
     const validSegments: Uint8Array[] = [];
-    const validSceneNumbers: number[] = []; // v6.0.65: 与validSegments平行——追踪每段对应的场景号
+    const validSceneNumbers: number[] = [];
     const failedScenes: number[] = [];
     for (let idx = 0; idx < videos.length; idx++) {
       const v = videos[idx] as any;
       let segment: Uint8Array | null = null;
+      // Build URL attempt order: presigned (most reliable) → original → presigned again
+      const urlsToTry: string[] = v.presignedUrl
+        ? [v.presignedUrl, v.url, v.presignedUrl]
+        : [v.url, v.url, v.url];
       for (let attempt = 1; attempt <= 3; attempt++) {
+        const downloadUrl = urlsToTry[attempt - 1];
         try {
-          const resp = await fetchWithTimeout(v.url, {}, 60000);
+          const resp = await fetchWithTimeout(downloadUrl, {}, 60000);
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           const buf = await resp.arrayBuffer();
           segment = new Uint8Array(buf);
-          console.log(`[MergeVideos] Downloaded ${idx + 1}/${videos.length} (scene ${v.sceneNumber}): ${(buf.byteLength / 1024).toFixed(0)}KB${attempt > 1 ? ` (retry ${attempt})` : ''}`);
+          const urlType = downloadUrl === v.presignedUrl ? 'presigned' : 'direct';
+          console.log(`[MergeVideos] Downloaded ${idx + 1}/${videos.length} (scene ${v.sceneNumber}): ${(buf.byteLength / 1024).toFixed(0)}KB${attempt > 1 ? ` (retry ${attempt}, ${urlType})` : ''}`);
           break;
         } catch (dlErr: any) {
-          console.warn(`[MergeVideos] Download attempt ${attempt}/3 for scene ${v.sceneNumber} failed: ${dlErr.message}`);
+          const urlType = downloadUrl === v.presignedUrl ? 'presigned' : 'direct';
+          console.warn(`[MergeVideos] Download attempt ${attempt}/3 for scene ${v.sceneNumber} failed (${urlType}): ${dlErr.message}`);
           if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
         }
       }
       if (segment) {
         validSegments.push(segment);
-        validSceneNumbers.push(v.sceneNumber); // v6.0.65: 平行追踪
+        validSceneNumbers.push(v.sceneNumber);
       } else {
         failedScenes.push(v.sceneNumber);
         console.error(`[MergeVideos] ❌ Scene ${v.sceneNumber} download FAILED after 3 attempts — will be MISSING from merged video`);
@@ -2682,11 +2871,11 @@ app.post(`${PREFIX}/episodes/:episodeId/merge-videos`, async (c) => {
     }
 
     if (failedScenes.length > 0) {
-      console.warn(`[MergeVideos] ���️ ${failedScenes.length}/${videos.length} scenes failed download: [${failedScenes.join(',')}]`);
+      console.warn(`[MergeVideos] ⚠️ ${failedScenes.length}/${videos.length} scenes failed download: [${failedScenes.join(',')}]`);
     }
 
     if (validSegments.length === 0) {
-      return c.json({ success: false, error: `所有 ${videos.length} 个分镜视频下载失败（场景: ${videos.map((v: any) => v.sceneNumber).join(',')}），请检查网络��重试` }, 500);
+      return c.json({ success: false, error: `所有 ${videos.length} 个分镜视频下载失败（场景: ${videos.map((v: any) => v.sceneNumber).join(',')}），请检查网络后重试` }, 500);
     }
 
     // v6.0.96: 内存检查——记录总大小，为批处理策略提供依据
@@ -2707,7 +2896,7 @@ app.post(`${PREFIX}/episodes/:episodeId/merge-videos`, async (c) => {
           concatResult = concatMP4(validSegments, concatOpts);
         } else {
           // >6段: 链式分批合并——每批最多处理4个段+前一批结果
-          // 峰值内存 ≈ 4×最��分段 + 2×中间结果，避免一次性加载所有段
+          // 峰值内存 ≈ 4×最大分段 + 2×中间结果，避免一次性加载所有段
           console.log(`[MergeVideos] 🔀 Batch concat: ${validSegments.length} segments in batches of 4`);
           const BATCH = 4;
           let batchData: Uint8Array = validSegments[0];
@@ -2977,7 +3166,7 @@ app.post(`${PREFIX}/episodes/:episodeId/repair-video`, async (c) => {
           mergedVideoUrl = await uploadToOSS(outputKey, valid[0].buffer, 'video/mp4');
         }
       } catch (concatErr: any) {
-        // v6.0.69: 分辨率不一致 or 其他拼接失败 → 上传最大���段MP4兜底
+        // v6.0.69: 分辨率不一致 or 其他拼接失败 → 上传最大片段MP4兜底
         if (concatErr.resolutionMismatch) {
           console.warn(`[RepairVideo] ⚠️ Resolution mismatch — falling back to largest single segment`);
         } else {
@@ -3052,7 +3241,7 @@ app.post(`${PREFIX}/series/:seriesId/merge-all-videos`, async (c) => {
         if (videos.length === 0) continue;
 
         // v6.0.106→107: OOM 预防——与 merge-videos 共享阈值常量
-        // 批量路由中单集跳过不影响��他集，仅记录到 skipped 列表供前端按需本地合并
+        // 批量路由中单集跳过不影响其他集，仅记录到 skipped 列表供前端按需本地合并
         const epEstSizeMB = videos.length * ESTIMATED_SEGMENT_SIZE_MB;
         if (videos.length > MAX_SERVER_MERGE_SEGMENTS || epEstSizeMB > MAX_SERVER_MERGE_SIZE_MB) {
           console.log(`[MergeAll] 🔀 ep${ep.episode_number}: skipping server merge (${videos.length} segments, ~${epEstSizeMB}MB) — recommend client merge`);
@@ -3159,7 +3348,7 @@ app.post(`${PREFIX}/series/:seriesId/merge-all-videos`, async (c) => {
   }
 });
 
-// ==================== AI从创意创建（简化版） ====================
+// ==================== [J] AI从创意创建（简化版） ====================
 
 app.post(`${PREFIX}/series/create-from-idea`, async (c) => {
   try {
@@ -3167,7 +3356,7 @@ app.post(`${PREFIX}/series/create-from-idea`, async (c) => {
     const { userInput, userPhone, targetAudience, scriptGenre } = body;
     const totalEpisodes = Math.min(Math.max(parseInt(body.totalEpisodes) || 10, 1), 50);
     if (!userInput || !userPhone) return c.json({ success: false, error: '缺少必要参数' }, 400);
-    if (userInput.length > 5000) return c.json({ success: false, error: '创意��述不能超过5000字' }, 400);
+    if (userInput.length > 5000) return c.json({ success: false, error: '创意描述不���超过5000字' }, 400);
 
     // v6.0.16+: 频率限制（创建系列是重量级操作）
     const rateCheck = rateLimiters.createSeries.check(userPhone);
@@ -3208,7 +3397,7 @@ app.post(`${PREFIX}/series/create-from-idea`, async (c) => {
 //  [H] 火山引擎 — 视频提交 / 状态查询 / Debug / 批量操作
 // ------------------------------------------------------------------
 
-// ==================== 火山引擎 - 视频生成 ====================
+// ==================== [K] 火山引擎 - 视频生成 ====================
 
 app.post(`${PREFIX}/volcengine/generate`, async (c) => {
   try {
@@ -3242,7 +3431,8 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
 
     // v6.0.96: 每日视频生成配额检查（非管理员账号每天5个免费，超出需付费5元/个）
     let quotaCheckInfo: { usedToday: number; freeLimit: number; paidCredits: number; freeRemaining: number } | null = null;
-    if (userPhone && userPhone !== ADMIN_PHONE) {
+    const _isAdminUser = userPhone ? await isAdminPhone(userPhone) : false;
+    if (userPhone && !_isAdminUser) {
       const quota = await getUserQuota(userPhone);
       if (quota.totalRemaining <= 0) {
         console.log(`[Quota] ${userPhone} exceeded daily quota: used=${quota.usedToday}/${quota.freeLimit} free, paid=${quota.paidCredits}`);
@@ -3290,11 +3480,11 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
           const charDesc = coherenceCheck.characterAppearances.map((ch: any) =>
             `[${ch.name}]外貌锁定：${ch.appearance || ch.role}`
           ).join('。');
-          contextParts.push(`【角色外貌强制锁定——以下每个角色的五官/发型/服装/配饰必须100%严格���守，帧间不可有任何变化】${charDesc}。【违规红线】角色脸型/发色/服装颜色变化视为严重错误；面部痣/疤痕/胎记的位置和大小不允许任何偏移——左脸的痣绝不能出现在右脸`);
+          contextParts.push(`【角色外貌强制锁定——以下每个角色的五官/发型/服装/配饰必须100%严格遵守，帧间不可有任何变化】${charDesc}。【违规红线】角色脸型/发色/服装颜色变化视为严重错误；面部痣/疤痕/胎记的位置和大小不允许任何偏移——左脸的痣绝不能出现在右脸`);
         } else if (ctxChars && ctxChars.length > 0) {
           // 回退：使用 characters 表的 appearance 字段（v6.0.69增强格式）
           const charDesc = ctxChars.map((ch: any) => `[${ch.name}]：${ch.appearance || ch.personality || ch.role}`).join('；');
-          contextParts.push(`【角色外貌锁定】${charDesc}。所有角色五官/发型/服装/面部微特征(痣/疤痕/酒窝位置)必须严格遵守以上描述，帧间不可变化——面部痣的位置严禁左右互换或消失`);
+          contextParts.push(`【角色外貌锁定】${charDesc}。所有角色五官/发型/服装/面部微特征(痣/疤痕/酒窝位置)必须严格遵守以上描述，��间不可变化——面部痣的位置严禁左右互换或消失`);
         }
 
         // v6.0.8: 注入视觉风格指南中的色彩方案和构图规范（截取关键部分控制token）
@@ -3342,7 +3532,7 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
           try {
             const sceneNum = parseInt(storyboardNumber);
             if (sceneNum > 0) {
-              // v6.0.20: 扩大查询范围到前2个+后1个场景，获取更多连续性��下文
+              // v6.0.20: 扩大查询范围到前2个+后1个场景，获取更多连续性上下文
               const neighborRange = [sceneNum - 2, sceneNum - 1, sceneNum + 1].filter(n => n > 0);
               const { data: neighborScenes } = await supabase
                 .from('series_storyboards')
@@ -3378,8 +3568,8 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
                 if (!prevScene && crossEpPrevScene && sceneNum === 1) {
                   const locInfo = crossEpPrevScene.location ? `地点：${crossEpPrevScene.location}` : '';
                   const dlgInfo = crossEpPrevScene.dialogue ? `对话：「${crossEpPrevScene.dialogue.substring(0, 80)}」` : '';
-                  transitionParts.push(`【上集末尾(第${episodeNumber - 1}集最后场景)——本集开头必须承接上集结尾】${crossEpPrevScene.description?.substring(0, 100) || ''}。情感：${crossEpPrevScene.emotional_tone || '自然'}，${[locInfo, dlgInfo].filter(Boolean).join('，')}。【关键约束】本集第1场景开场画面必须与上集结尾画面一致——角色服装/发型/位置延续，同一地点保持相同布景/光线`);
-                  // 标记已用跨集场景，避免下面重复注入
+                  transitionParts.push(`【上集末尾(第${episodeNumber - 1}集最后场景)——本集开头必须承接上集结尾】${crossEpPrevScene.description?.substring(0, 100) || ''}，情感：${crossEpPrevScene.emotional_tone || '自然'}，${[locInfo, dlgInfo].filter(Boolean).join('，')}。【关键约束】本集第1场景开场画面必须与上集结尾画面一致——角色服装/发型/位置延续，同一地点保持相同布景/光线`);
+                  // 标记已注入跨集场景，避免下面重复注入
                   prevScene = crossEpPrevScene;
                 }
 
@@ -3398,7 +3588,7 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
                 if (nextScene) {
                   transitionParts.push(`【下一场景(场景${sceneNum + 1})预告】${nextScene.description?.substring(0, 50) || ''}。本场景结尾需为下一场景做视觉铺垫，避免画面突变`);
                 }
-                // v6.0.69: 对话去重约束——防止同集内��话重复
+                // v6.0.69: 对话去重约束——防止同集内对话重复
                 if (prevScene?.dialogue) {
                   transitionParts.push(`【对话去重】上一场景对话为「${prevScene.dialogue.substring(0, 60)}」——本场景必须推进全新对话内容，严禁重复或近似上一场景的台词`);
                 }
@@ -3421,10 +3611,9 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
               .select('generation_metadata')
               .eq('id', storyboardId)
               .maybeSingle();
-            if (currentSb?.generation_metadata) {
-              const curMeta = typeof currentSb.generation_metadata === 'string'
-                ? JSON.parse(currentSb.generation_metadata) : currentSb.generation_metadata;
-              if (curMeta?.transitionFromPrevious) {
+            const curMeta = parseMeta(currentSb?.generation_metadata);
+            if (curMeta) {
+              if (curMeta.transitionFromPrevious) {
                 contextParts.push(`【本场景镜头衔接指令】${curMeta.transitionFromPrevious}——视频开头必须体现这一镜头衔接`);
                 console.log(`[Volcengine] 🎬 Injected current scene transitionFromPrevious: ${curMeta.transitionFromPrevious.substring(0, 50)}`);
               }
@@ -3525,7 +3714,7 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
     let selectedModel = model || 'doubao-seedance-1-5-pro-251215';
     if (!model) {
       // v6.0.21: 系列分镜强制统一使用 seedance-1-5-pro 模型
-      // 确��所有分镜输出一致的分���率/编码，避免MP4拼接因分辨率不匹配而失败
+      // 确保所有分镜输出一致的分辨率/编码，避免MP4拼接因分辨率不匹配而失败
       if (seriesId && storyboardNumber) {
         selectedModel = 'doubao-seedance-1-5-pro-251215';
       } else if (enableAudio) {
@@ -3563,7 +3752,7 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
       return '720p';
     }
     const normalizedRes = normalizeRes(resolution);
-    // 如果请���的分辨率超出模型能力，降级到模型最高支持
+    // 如果请求的分辨率超出模型能力，降级到模型最高支持
     const maxModelRes = caps.resolutions[caps.resolutions.length - 1] || '720p';
     let effectiveRes = RES_ORDER.indexOf(normalizedRes) > RES_ORDER.indexOf(maxModelRes)
       ? maxModelRes : normalizedRes;
@@ -3715,7 +3904,7 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
     console.log(`[Volcengine] ✅ DB insert confirmed: ${insertedTask.task_id}`);
 
     // v6.0.96: 扣减每日视频配额（优先消耗免费额度，再消耗付费额度）
-    if (quotaCheckInfo && userPhone && userPhone !== ADMIN_PHONE) {
+    if (quotaCheckInfo && userPhone && !_isAdminUser) {
       try {
         const today = new Date().toISOString().split('T')[0];
         if (quotaCheckInfo.freeRemaining > 0) {
@@ -3770,7 +3959,7 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
     const stylePrompt = STYLE_PROMPTS[effectiveStyle] || STYLE_PROMPTS.comic;
     const contentArray: any[] = [];
     publicUrls.forEach(url => contentArray.push({ type: "image_url", image_url: { url } }));
-    // v6.0.103: 增强风格锁定——从coherence_check提取色���/构图/环境的完整描述注入styleLock
+    // v6.0.103: 增强风格锁定——从coherence_check提取色彩/构图/环境的完整描述注入styleLock
     // 根因: 此前styleLock仅包含风格分类描述(如"真实写实风格...")，缺少具体色调/质感/渲染参数
     //       不同分镜只有类别相同但具体视觉参数不一致，导致画风漂移（同一部剧有的偏暖有的偏冷）
     let styleAnchor = '';
@@ -3803,7 +3992,7 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
       }
     }
 
-    // v6.0.69: Seedance 2.0 专业视频约束——运镜/画质/防崩/角色锁定/作品类型定制
+    // v6.0.69: Seedance 2.0 专业视频约束—��运镜/画质/防崩/角色锁定/作品类型定制
     const seedanceSuffix = publicUrls.length > 0
       ? `${SEEDANCE_BASE_SUFFIX}${SEEDANCE_I2V_EXTRA}。`
       : `${SEEDANCE_BASE_SUFFIX}。`;
@@ -3832,7 +4021,32 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
     const framingDirective = ASPECT_FRAMING_DIRECTIVES[effectiveAspectRatio] || ASPECT_FRAMING_DIRECTIVES['9:16'];
     console.log(`[Volcengine] 📐 AspectRatio framing directive injected for ${effectiveAspectRatio}: ${framingDirective.substring(0, 60)}...`);
 
-    contentArray.push({ type: "text", text: `${styleLock}\n${framingDirective}${proShotDirective ? `\n${proShotDirective}` : ''}${productionTypeDirective ? `\n${productionTypeDirective}` : ''}\n${finalPrompt}\n${seedanceSuffix}` });
+    // v6.0.182: comprehensive content.text sanitization — fix Volcengine "Invalid content.text" rejection
+    // Root causes: (1) invalid Unicode/control chars from DB-stored AI-generated text
+    //              (2) text exceeding API max length after context enrichment (~8000+ chars)
+    // Fix: sanitize chars + truncate to API limit (4000 chars)
+    const rawContentText = `${styleLock}\n${framingDirective}${proShotDirective ? `\n${proShotDirective}` : ''}${productionTypeDirective ? `\n${productionTypeDirective}` : ''}\n${finalPrompt}\n${seedanceSuffix}`;
+    // Step 1: Remove invalid characters — control chars (except \t\n\r), null bytes, U+FFFD, lone surrogates
+    let sanitizedText = rawContentText
+      .replace(/\0/g, '')
+      .replace(/\uFFFD+/g, '')
+      .replace(/\uFEFF/g, '')
+      .replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+      .replace(/[\uD800-\uDFFF]/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    // Step 2: Truncate to API limit — Volcengine Seedance content.text max ~4000 chars
+    const MAX_CONTENT_TEXT = 4000;
+    if (sanitizedText.length > MAX_CONTENT_TEXT) {
+      console.warn(`[Volcengine] ⚠️ content.text too long (${sanitizedText.length} chars), truncating to ${MAX_CONTENT_TEXT}`);
+      const headSize = Math.min(1200, styleLock.length + framingDirective.length + 200);
+      const tailSize = MAX_CONTENT_TEXT - headSize - 20;
+      const head = sanitizedText.substring(0, headSize);
+      const tail = sanitizedText.substring(sanitizedText.length - tailSize);
+      sanitizedText = head + '\n' + tail;
+    }
+    console.log(`[Volcengine] 📝 content.text length: ${sanitizedText.length} chars (raw: ${rawContentText.length})`);
+    contentArray.push({ type: "text", text: sanitizedText });
 
     // v5.6.2: 将视频时长、分辨率作为 API 参数传递（而非仅写在 text prompt 中）
     // 修复：之前 duration/resolution 只存在于 text 提示词，模型不一定遵守
@@ -3938,7 +4152,7 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
   }
 });
 
-// 查询视频任务状态 — v5.4.0: 完成时自动转存阿���云 OSS
+// 查询视频任务状态 — v5.4.0: 完成时自动转存阿里云 OSS
 app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
   try {
     const taskId = c.req.param('taskId');
@@ -3972,7 +4186,8 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
         const _meta = dbTask.generation_metadata;
         (async () => {
           try {
-            const videoResult = await transferFileToOSS(dbTask.video_url, `videos/${_localId}.mp4`, 'video/mp4');
+            // v6.0.160: 传入refreshUrlFn，TOS URL过期时自动从Volcengine获取新鲜URL重试
+            const videoResult = await transferFileToOSS(dbTask.video_url, `videos/${_localId}.mp4`, 'video/mp4', makeVolcRefreshFn(dbTask.volcengine_task_id));
             if (videoResult.transferred) {
               await supabase.from('video_tasks').update({ video_url: videoResult.url }).eq('task_id', _localId);
               if (_meta?.type === 'storyboard_video' && _meta.seriesId && _meta.episodeNumber) {
@@ -3996,12 +4211,20 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
       return c.json({ success: true, data: { task_id: dbTask?.task_id || taskId, status: dbTask?.status || 'unknown' }, warning: 'VOLCENGINE_API_KEY未配置' });
     }
 
-    // ---- 查询火山引擎 API ---- v5.6.1: 降低超时到25s
+    // ---- 查询火山引擎 API ----
+    // v6.0.183: 对长时间处理的任务(>10min)使用更长超时(40s vs 25s)，减少因API超时导致的"假性processing"
+    const taskAgeMs = dbTask?.created_at ? Date.now() - new Date(dbTask.created_at).getTime() : 0;
+    const volcStatusTimeout = taskAgeMs > 10 * 60 * 1000 ? 40000 : 25000;
     let apiResp: Response;
     try {
-      apiResp = await fetchWithTimeout(`${VOLCENGINE_BASE_URL}/${volcId}`, { method: 'GET', headers: { 'Authorization': `Bearer ${VOLCENGINE_API_KEY}`, 'Content-Type': 'application/json' } }, 25000);
+      apiResp = await fetchWithTimeout(`${VOLCENGINE_BASE_URL}/${volcId}`, { method: 'GET', headers: { 'Authorization': `Bearer ${VOLCENGINE_API_KEY}`, 'Content-Type': 'application/json' } }, volcStatusTimeout);
     } catch (fe: any) {
-      if (dbTask) return c.json({ success: true, data: { task_id: dbTask.task_id, status: dbTask.status, content: dbTask.video_url ? { video_url: dbTask.video_url, cover_url: dbTask.thumbnail || '' } : undefined }, warning: '网络错误，显示数据库缓存', isFallback: true });
+      if (dbTask) {
+        // v6.0.183: 标记 isFallback + 任务年龄，帮助前端识别缓存状态
+        const ageMinutes = Math.round(taskAgeMs / 60000);
+        console.warn(`[Volcengine] Status API timeout for task ${dbTask.task_id} (age ${ageMinutes}min), returning DB cache`);
+        return c.json({ success: true, data: { task_id: dbTask.task_id, status: dbTask.status, content: dbTask.video_url ? { video_url: dbTask.video_url, cover_url: dbTask.thumbnail || '' } : undefined, taskAgeMinutes: ageMinutes }, warning: '网络错误，显示数据库缓存', isFallback: true });
+      }
       return c.json({ success: false, error: `查询失败: ${fe.message}` }, 500);
     }
     const respText = await apiResp.text();
@@ -4107,7 +4330,8 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
         const _meta = dbTask.generation_metadata;
         const OSS_TIMEOUT_MS = 12000;
         const ossTransferTask = (async () => {
-          const videoResult = await transferFileToOSS(rawVideoUrl, `videos/${localId}.mp4`, 'video/mp4');
+          // v6.0.160: 传入refreshUrlFn以防rawVideoUrl已过期
+          const videoResult = await transferFileToOSS(rawVideoUrl, `videos/${localId}.mp4`, 'video/mp4', makeVolcRefreshFn(volcId));
           if (videoResult.transferred) {
             const ossUpd: any = { video_url: videoResult.url };
             if (rawThumbnailUrl) {
@@ -4164,8 +4388,20 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
     if (dbTask) {
       const dbStatus = volcStatus === 'failed' ? 'failed' : volcStatus;
       await supabase.from('video_tasks').update({ status: dbStatus, updated_at: new Date().toISOString() }).eq('task_id', dbTask.task_id);
+      // v6.0.183: 长时间 processing 的任务标记为潜在卡住——帮助前端和管理面板识别
+      const ageMin = Math.round(taskAgeMs / 60000);
+      if (ageMin > 20 && ['processing', 'submitted', 'pending'].includes(volcStatus)) {
+        console.warn(`[Volcengine] ⚠️ Task ${dbTask.task_id} (volc=${volcId}) still ${volcStatus} after ${ageMin} minutes — may be stuck on Volcengine side`);
+      }
     }
-    return c.json({ success: true, data: { ...apiData, content: apiData.content || {} } });
+    // v6.0.161: 失败任务返回错误原因，帮助前端展示更有用的信息
+    const volcError = apiData.error?.message || apiData.error_message || apiData.base_resp?.status_message || '';
+    if (volcStatus === 'failed' && volcError) {
+      console.warn(`[Volcengine] Task ${dbTask?.task_id || volcId} failed: ${volcError}`);
+    }
+    // v6.0.183: 返回任务年龄帮助前端自适应
+    const ageMinutes = dbTask?.created_at ? Math.round((Date.now() - new Date(dbTask.created_at).getTime()) / 60000) : undefined;
+    return c.json({ success: true, data: { ...apiData, content: apiData.content || {}, ...(volcError ? { failureReason: volcError } : {}), ...(ageMinutes !== undefined ? { taskAgeMinutes: ageMinutes } : {}) } });
   } catch (error: any) {
     console.error('[Volcengine] Status error:', truncateErrorMsg(error));
     return c.json({ error: error.message }, 500);
@@ -4239,7 +4475,7 @@ app.get(`${PREFIX}/volcengine/tasks`, async (c) => {
         })
       : activeTasks;
 
-    // v6.0.77: 自愈过期卡住的任务——超过20分钟仍��� pending/processing/submitted 的视频任务标记为 failed
+    // v6.0.77: 自愈过期卡住的任务——超过20分钟仍为 pending/processing/submitted 的视频任务标记为 failed
     const STALE_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
     const now = Date.now();
     const staleTaskIds: string[] = [];
@@ -4337,7 +4573,7 @@ app.post(`${PREFIX}/volcengine/retry/:taskId`, async (c) => {
     }
     const sp = STYLE_PROMPTS[retryStyle] || STYLE_PROMPTS.comic;
     const styleLockR = `【强制画风：${sp}。全片必须严格统一此风格，禁止混入其他画风】`;
-    const content: any[] = [{ type: 'text', text: `${styleLockR}\n${task.prompt}` }];
+    const content: any[] = [{ type: 'text', text: `${styleLockR}\n${task.prompt}`.replace(/\uFFFD+/g, '') }];
     const meta = task.generation_metadata || {};
     const rb: any = { model: meta.model || 'doubao-seedance-1-5-pro-251215', content, return_last_frame: true };
     if (meta.enableAudio) rb.enable_audio = true;
@@ -4353,7 +4589,7 @@ app.post(`${PREFIX}/volcengine/retry/:taskId`, async (c) => {
   }
 });
 
-// ==================== 社区互动补全路由 ====================
+// ==================== [L] 社区互动补全路由 ====================
 
 app.get(`${PREFIX}/community/works/:workId/comments`, async (c) => {
   try {
@@ -4427,7 +4663,7 @@ app.get(`${PREFIX}/community/works/:workId/like-status`, async (c) => {
   } catch (error: any) { console.error('[GET /community/works/:workId/like-status] Error:', error); return c.json({ success: false, error: error.message }, 500); }
 });
 
-// TODO: increment-view 和 share ��前是空操作 stub。
+// TODO: increment-view 和 share 目前是空操作 stub。
 // video_tasks 表没有 views_count / shares_count 列，需要 DDL 迁移后才能实现真实计数。
 // 前端以 fire-and-forget 方式调用，不依赖返回数据，因此 stub 不影响功能。
 app.post(`${PREFIX}/community/works/:workId/increment-view`, async (c) => {
@@ -4530,7 +4766,7 @@ app.post(`${PREFIX}/community/works/:workId/refresh-video`, async (c) => {
     if (isOSSConfigured() && !freshVideoUrl.includes('.aliyuncs.com')) {
       (async () => {
         try {
-          const result = await transferFileToOSS(freshVideoUrl, `videos/${task.task_id}.mp4`, 'video/mp4');
+          const result = await transferFileToOSS(freshVideoUrl, `videos/${task.task_id}.mp4`, 'video/mp4', makeVolcRefreshFn(volcId));
           if (result.transferred) {
             const ossUpd: any = { video_url: result.url };
             if (freshThumbnailUrl) {
@@ -4580,7 +4816,7 @@ app.post(`${PREFIX}/community/tasks/batch-status`, async (c) => {
 //  [J] OSS & 同步 — 视频转存OSS / 批量同步状态 / 综合恢复
 // ------------------------------------------------------------------
 
-// ==================== 视频转存到阿里云 OSS ====================
+// ==================== [M] 视频转存到阿里云 OSS ====================
 
 app.post(`${PREFIX}/video/transfer`, async (c) => {
   try {
@@ -4592,7 +4828,9 @@ app.post(`${PREFIX}/video/transfer`, async (c) => {
     }
 
     console.log(`[Transfer] Starting OSS transfer for task ${taskId}`);
-    const result = await transferFileToOSS(volcengineUrl, `videos/${taskId}.mp4`, 'video/mp4');
+    // v6.0.173-fix: 查询volcengine_task_id用于403刷新重试
+    const { data: taskRow } = await supabase.from('video_tasks').select('volcengine_task_id').eq('task_id', taskId).maybeSingle();
+    const result = await transferFileToOSS(volcengineUrl, `videos/${taskId}.mp4`, 'video/mp4', makeVolcRefreshFn(taskRow?.volcengine_task_id));
 
     if (result.transferred) {
       // 更新 video_tasks 表中的 video_url 为 OSS URL
@@ -4622,13 +4860,14 @@ app.post(`${PREFIX}/video/transfer`, async (c) => {
   }
 });
 
-// ==================== 批量同步火山引擎任务状态 + 转存 OSS ====================
+// ==================== [M] 批量同步火山引擎任务状态 + 转存 OSS ====================
 
 // v5.5.1: 带 deadline 防超时 + 并行批处理
+// v6.0.173: deadline 50→40s(防Edge Function硬限60s), batch 3→5, per-task 15→10s, limits缩减
 app.post(`${PREFIX}/volcengine/sync-pending-tasks`, async (c) => {
-  const DEADLINE_MS = 50000;
-  const BATCH_SIZE = 3;
-  const PER_TASK_TIMEOUT = 15000;
+  const DEADLINE_MS = 40000;
+  const BATCH_SIZE = 5;
+  const PER_TASK_TIMEOUT = 10000;
   const startTime = Date.now();
   const isDeadlineNear = () => (Date.now() - startTime) > DEADLINE_MS;
 
@@ -4636,11 +4875,11 @@ app.post(`${PREFIX}/volcengine/sync-pending-tasks`, async (c) => {
     console.log('[Sync] v5.5.1: Starting comprehensive sync with deadline...');
 
     // v6.0.24: 精简字段——sync只需task_id/volcengine_task_id/generation_metadata，排除prompt等大字段
-    const SYNC_TASK_FIELDS = 'task_id, volcengine_task_id, status, video_url, thumbnail, generation_metadata, series_id, created_at';
     const [{ data: pendingTasks, error: qErr }, { data: completedNoUrl }, { data: completedVolcUrl }] = await Promise.all([
-      supabase.from('video_tasks').select(SYNC_TASK_FIELDS).in('status', ['pending', 'processing', 'running']).not('volcengine_task_id', 'is', null).order('created_at', { ascending: false }).limit(20),
-      supabase.from('video_tasks').select(SYNC_TASK_FIELDS).eq('status', 'completed').not('volcengine_task_id', 'is', null).is('video_url', null).order('created_at', { ascending: false }).limit(10),
-      supabase.from('video_tasks').select(SYNC_TASK_FIELDS).eq('status', 'completed').not('volcengine_task_id', 'is', null).not('video_url', 'is', null).like('video_url', '%volces.com%').order('created_at', { ascending: false }).limit(10),
+      // v6.0.173: limits缩减 20/10/10 → 12/6/6，确保最多24个task在40s deadline内处理完
+      supabase.from('video_tasks').select(TASK_SYNC_FIELDS).in('status', ['pending', 'processing', 'running']).not('volcengine_task_id', 'is', null).order('created_at', { ascending: false }).limit(12),
+      supabase.from('video_tasks').select(TASK_SYNC_FIELDS).eq('status', 'completed').not('volcengine_task_id', 'is', null).is('video_url', null).order('created_at', { ascending: false }).limit(6),
+      supabase.from('video_tasks').select(TASK_SYNC_FIELDS).eq('status', 'completed').not('volcengine_task_id', 'is', null).not('video_url', 'is', null).like('video_url', '%volces.com%').order('created_at', { ascending: false }).limit(6),
     ]);
 
     if (qErr) return c.json({ success: false, error: qErr.message }, 500);
@@ -4659,54 +4898,17 @@ app.post(`${PREFIX}/volcengine/sync-pending-tasks`, async (c) => {
 
     let synced = 0, failed = 0, stillRunning = 0, skipped = 0;
 
+    // v6.0.161: sync流程不做inline OSS转存(OSS下载最多120s撑爆deadline)
+    // 保存Volcengine URL即可，OSS转存由 oss-batch-transfer 或下次 status poll 完成
     async function syncOneTask(task: any): Promise<void> {
-      const volcId = task.volcengine_task_id;
       try {
-        const resp = await fetchWithTimeout(`${VOLCENGINE_BASE_URL}/${volcId}`, {
-          method: 'GET',
-          headers: { 'Authorization': `Bearer ${VOLCENGINE_API_KEY}`, 'Content-Type': 'application/json' },
-        }, PER_TASK_TIMEOUT);
-
-        if (!resp.ok) {
-          if (resp.status === 404) {
-            await supabase.from('video_tasks').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('task_id', task.task_id);
-            failed++;
-          }
-          return;
-        }
-
-        const apiData = await resp.json();
-        const volcStatus = apiData.status || 'unknown';
-
-        if (['succeeded', 'completed', 'success'].includes(volcStatus)) {
-          let videoUrl = apiData.content?.video_url || apiData.video_url || '';
-          let thumbnailUrl = apiData.content?.cover_url || apiData.thumbnail || '';
-
-          if (videoUrl && !isDeadlineNear()) {
-            try { const vr = await transferFileToOSS(videoUrl, `videos/${task.task_id}.mp4`, 'video/mp4'); videoUrl = vr.url; } catch (e: any) { console.warn(`[Sync] Video OSS transfer failed for ${task.task_id}:`, e.message); }
-          }
-          if (thumbnailUrl && !isDeadlineNear()) {
-            try { const tr = await transferFileToOSS(thumbnailUrl, `thumbnails/${task.task_id}.jpg`, 'image/jpeg'); thumbnailUrl = tr.url; } catch (e: any) { console.warn(`[Sync] Thumbnail OSS transfer failed for ${task.task_id}:`, e.message); }
-          }
-
-          const upd: any = { status: 'completed', updated_at: new Date().toISOString() };
-          if (videoUrl) upd.video_url = videoUrl;
-          if (thumbnailUrl) upd.thumbnail = thumbnailUrl;
-          await supabase.from('video_tasks').update(upd).eq('task_id', task.task_id);
-
-          if (videoUrl && task.generation_metadata?.type === 'storyboard_video') {
-            const meta = task.generation_metadata;
-            const sn = meta.storyboardNumber || meta.sceneNumber;
-            if (meta.seriesId && meta.episodeNumber && sn) {
-              const sbUpd: any = { video_url: videoUrl, status: 'completed', updated_at: new Date().toISOString() };
-              await supabase.from('series_storyboards').update(sbUpd)
-                .eq('series_id', meta.seriesId).eq('episode_number', meta.episodeNumber).eq('scene_number', sn);
-            }
-          }
+        const result = await queryVolcengineStatus(task.volcengine_task_id, PER_TASK_TIMEOUT);
+        if (result.volcStatus === 'completed') {
+          await writeBackTaskCompletion(task, result.videoUrl, result.thumbnailUrl);
           synced++;
           console.log(`[Sync] ✅ ${task.task_id} -> completed`);
-        } else if (['failed', 'error'].includes(volcStatus)) {
-          await supabase.from('video_tasks').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('task_id', task.task_id);
+        } else if (result.volcStatus === 'failed') {
+          await markTaskFailed(task.task_id);
           failed++;
         } else {
           stillRunning++;
@@ -4728,7 +4930,7 @@ app.post(`${PREFIX}/volcengine/sync-pending-tasks`, async (c) => {
     }
 
     const elapsed = Date.now() - startTime;
-    const message = `同步完成(${elapsed}ms)：${synced} 个已完成，${failed} 个失败，${stillRunning} 个仍在处理${skipped > 0 ? `，${skipped} 个���超时跳过` : ''}`;
+    const message = `同步完成(${elapsed}ms)：${synced} 个已完成，${failed} 个失败，${stillRunning} 个仍在处理${skipped > 0 ? `，${skipped} 个因超时跳过` : ''}`;
     console.log(`[Sync] ✅ ${message}`);
     return c.json({ success: true, total: allTasks.length, synced, failed, stillRunning, skipped, message });
   } catch (error: any) {
@@ -4738,10 +4940,11 @@ app.post(`${PREFIX}/volcengine/sync-pending-tasks`, async (c) => {
 });
 
 // v5.5.1: 综合恢复所有视频任务 — 带 deadline 防超时 + 并行批处理
+// v6.0.173: deadline 50→45s, batch 3→5, per-task 15→10s
 app.post(`${PREFIX}/volcengine/recover-all-tasks`, async (c) => {
-  const DEADLINE_MS = 50000; // 50秒 deadline，确保在 Edge Function 超时前返回
-  const BATCH_SIZE = 3; // 并行处理批次大小
-  const PER_TASK_TIMEOUT = 15000; // 每个火山引擎 API 调用 15秒超时
+  const DEADLINE_MS = 45000;
+  const BATCH_SIZE = 5;
+  const PER_TASK_TIMEOUT = 10000;
   const startTime = Date.now();
 
   const isDeadlineNear = () => (Date.now() - startTime) > DEADLINE_MS;
@@ -4751,17 +4954,16 @@ app.post(`${PREFIX}/volcengine/recover-all-tasks`, async (c) => {
     const seriesId = body.seriesId || '';
     console.log(`[Recover] Starting full recovery${seriesId ? ` for series ${seriesId}` : ' (global)'}...`);
 
-    // 1. 查出所有需要恢复���任务（v6.0.24: 精简字段）
-    const RECOVER_FIELDS = 'task_id, volcengine_task_id, status, video_url, thumbnail, generation_metadata, series_id, created_at';
+    // 1. 查出所有需要恢复的任务（使用共享字段常量 TASK_SYNC_FIELDS）
     let pendingQuery = supabase.from('video_tasks')
-      .select(RECOVER_FIELDS)
+      .select(TASK_SYNC_FIELDS)
       .in('status', ['pending', 'processing', 'running'])
       .not('volcengine_task_id', 'is', null)
       .order('created_at', { ascending: false })
       .limit(20);
 
     let completedNoUrlQuery = supabase.from('video_tasks')
-      .select(RECOVER_FIELDS)
+      .select(TASK_SYNC_FIELDS)
       .eq('status', 'completed')
       .not('volcengine_task_id', 'is', null)
       .is('video_url', null)
@@ -4769,7 +4971,7 @@ app.post(`${PREFIX}/volcengine/recover-all-tasks`, async (c) => {
       .limit(10);
 
     let volcUrlQuery = supabase.from('video_tasks')
-      .select(RECOVER_FIELDS)
+      .select(TASK_SYNC_FIELDS)
       .eq('status', 'completed')
       .not('volcengine_task_id', 'is', null)
       .not('video_url', 'is', null)
@@ -4802,34 +5004,16 @@ app.post(`${PREFIX}/volcengine/recover-all-tasks`, async (c) => {
 
     let recovered = 0, failed = 0, alreadyOK = 0, ossTransferred = 0, skipped = 0;
 
-    // 单个任务恢复逻辑
+    // 单个任务恢复逻辑（使用共享 queryVolcengineStatus + writeBackTaskCompletion）
     async function recoverOneTask(task: any): Promise<void> {
-      const volcId = task.volcengine_task_id;
       try {
-        const resp = await fetchWithTimeout(`${VOLCENGINE_BASE_URL}/${volcId}`, {
-          method: 'GET',
-          headers: { 'Authorization': `Bearer ${VOLCENGINE_API_KEY}`, 'Content-Type': 'application/json' },
-        }, PER_TASK_TIMEOUT);
-
-        if (!resp.ok) {
-          if (resp.status === 404) {
-            await supabase.from('video_tasks').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('task_id', task.task_id);
-            failed++;
-          }
-          return;
-        }
-
-        const apiData = await resp.json();
-        const volcStatus = apiData.status || 'unknown';
-
-        if (['succeeded', 'completed', 'success'].includes(volcStatus)) {
-          let videoUrl = apiData.content?.video_url || apiData.video_url || '';
-          let thumbnailUrl = apiData.content?.cover_url || apiData.thumbnail || '';
-
+        const result = await queryVolcengineStatus(task.volcengine_task_id, PER_TASK_TIMEOUT);
+        if (result.volcStatus === 'completed') {
+          let { videoUrl, thumbnailUrl } = result;
           // 转存到 OSS（仅在 deadline 未近时尝试）
           if (videoUrl && !isDeadlineNear()) {
             try {
-              const vr = await transferFileToOSS(videoUrl, `videos/${task.task_id}.mp4`, 'video/mp4');
+              const vr = await transferFileToOSS(videoUrl, `videos/${task.task_id}.mp4`, 'video/mp4', makeVolcRefreshFn(task.volcengine_task_id));
               videoUrl = vr.url;
               ossTransferred++;
             } catch (e: any) { console.warn(`[Recover] Video OSS transfer failed for ${task.task_id}:`, e.message); }
@@ -4840,27 +5024,11 @@ app.post(`${PREFIX}/volcengine/recover-all-tasks`, async (c) => {
               thumbnailUrl = tr.url;
             } catch (e: any) { console.warn(`[Recover] Thumbnail OSS transfer failed for ${task.task_id}:`, e.message); }
           }
-
-          const upd: any = { status: 'completed', updated_at: new Date().toISOString() };
-          if (videoUrl) upd.video_url = videoUrl;
-          if (thumbnailUrl) upd.thumbnail = thumbnailUrl;
-          await supabase.from('video_tasks').update(upd).eq('task_id', task.task_id);
-
-          // 同步到 series_storyboards
-          if (videoUrl && task.generation_metadata?.type === 'storyboard_video') {
-            const meta = task.generation_metadata;
-            const sn = meta.storyboardNumber || meta.sceneNumber;
-            if (meta.seriesId && meta.episodeNumber && sn) {
-              const sbUpd: any = { video_url: videoUrl, status: 'completed', updated_at: new Date().toISOString() };
-              await supabase.from('series_storyboards').update(sbUpd)
-                .eq('series_id', meta.seriesId).eq('episode_number', meta.episodeNumber).eq('scene_number', sn);
-            }
-          }
-
+          await writeBackTaskCompletion(task, videoUrl, thumbnailUrl);
           recovered++;
           console.log(`[Recover] ✅ ${task.task_id} -> recovered (${Date.now() - startTime}ms elapsed)`);
-        } else if (['failed', 'error'].includes(volcStatus)) {
-          await supabase.from('video_tasks').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('task_id', task.task_id);
+        } else if (result.volcStatus === 'failed') {
+          await markTaskFailed(task.task_id);
           failed++;
         } else {
           alreadyOK++;
@@ -4883,7 +5051,7 @@ app.post(`${PREFIX}/volcengine/recover-all-tasks`, async (c) => {
     }
 
     const elapsed = Date.now() - startTime;
-    const message = `全量恢复完成(${elapsed}ms)：${recovered} 个已恢复，${ossTransferred} 个已转存OSS，${failed} 个失败，${alreadyOK} 个仍在处理${skipped > 0 ? `，${skipped} 个因超时跳过` : ''}`;
+    const message = `全量恢复完成(${elapsed}ms)：${recovered} 个已恢复，${ossTransferred} 个已转存OSS，${failed} 个失败���${alreadyOK} 个仍在处理${skipped > 0 ? `，${skipped} 个因超时跳过` : ''}`;
     console.log(`[Recover] ✅ ${message}`);
     return c.json({ success: true, total: allRecoverTasks.length, recovered, failed, alreadyOK, ossTransferred, skipped, message });
   } catch (error: any) {
@@ -4903,7 +5071,8 @@ app.post(`${PREFIX}/volcengine/transfer-completed-to-oss`, async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const filterSeriesId = body.seriesId || '';
 
-    const DEADLINE_MS = 50000;
+    // v6.0.173: deadline 50→40s
+    const DEADLINE_MS = 40000;
     const startTime = Date.now();
     const isDeadlineNear = () => (Date.now() - startTime) > DEADLINE_MS;
 
@@ -4941,18 +5110,18 @@ app.post(`${PREFIX}/volcengine/transfer-completed-to-oss`, async (c) => {
         break;
       }
       try {
-        // v6.0.131: HEAD检查跳过已过期TOS URL（避免浪费120s timeout下载必定403的URL）
+        // v6.0.131+160: HEAD检查TOS URL过期——过期时尝试refreshUrlFn刷新而非直接跳过
         if (task.video_url.includes('volces.com') || task.video_url.includes('tos-cn')) {
           try {
             const headResp = await fetch(task.video_url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
             if (headResp.status === 403) {
-              console.warn(`[OSS-Batch] ⏭ ${task.task_id}: TOS URL expired (HEAD 403), skipping`);
-              headSkipped++;
-              continue;
+              // v6.0.160: 不再直接跳过——让transferFileToOSS通过refreshUrlFn尝试获取新鲜URL
+              console.log(`[OSS-Batch] ${task.task_id}: TOS URL expired (HEAD 403), will attempt refresh via Volcengine API`);
             }
           } catch { /* HEAD failed (timeout/network) — try transfer anyway */ }
         }
-        const vr = await transferFileToOSS(task.video_url, `videos/${task.task_id}.mp4`, 'video/mp4');
+        // v6.0.160: 传入refreshUrlFn，TOS 403时自动查询Volcengine获取新鲜URL
+        const vr = await transferFileToOSS(task.video_url, `videos/${task.task_id}.mp4`, 'video/mp4', makeVolcRefreshFn(task.volcengine_task_id));
         if (vr.transferred) {
           const upd: any = { video_url: vr.url, updated_at: new Date().toISOString() };
           await supabase.from('video_tasks').update(upd).eq('task_id', task.task_id);
@@ -4992,7 +5161,7 @@ app.post(`${PREFIX}/volcengine/transfer-completed-to-oss`, async (c) => {
       errors,
       skipped,
       headSkipped,
-      message: `批量转存完成(${elapsed}ms)：${transferred} 成功，${errors} 失败，${headSkipped} URL已过期跳过${skipped > 0 ? `，${skipped} 因��时跳过` : ''}`,
+      message: `批量转存完成(${elapsed}ms)：${transferred} 成功，${errors} 失败，${headSkipped} URL已过期跳过${skipped > 0 ? `，${skipped} 因超时跳过` : ''}`,
     });
   } catch (error: any) {
     console.error('[OSS-Batch] Error:', truncateErrorMsg(error));
@@ -5000,7 +5169,7 @@ app.post(`${PREFIX}/volcengine/transfer-completed-to-oss`, async (c) => {
   }
 });
 
-// ==================== 漫剧缩略图同步 ====================
+// ==================== [N] 漫剧缩略图同步 ====================
 
 // 🔥 v5.2.0: 批量同步缩略图 — 从已完成的 video_tasks 回写到 series_episodes
 app.post(`${PREFIX}/series/:id/sync-thumbnails`, async (c) => {
@@ -5025,7 +5194,7 @@ app.post(`${PREFIX}/series/:id/sync-thumbnails`, async (c) => {
       return c.json({ success: true, synced: 0, message: 'No completed video tasks with thumbnails found' });
     }
 
-    // 2. 按 episodeNumber 分组，取每组第一个缩略图；并���更新 storyboards
+    // 2. 按 episodeNumber 分组，取每组第一个缩略图；并同步更新 storyboards
     const episodeThumbnails = new Map<number, string>();
     let storyboardsSynced = 0;
     const now = new Date().toISOString();
@@ -5093,7 +5262,7 @@ app.post(`${PREFIX}/series/:id/sync-thumbnails`, async (c) => {
   }
 });
 
-// ==================== 漫剧进度和生成路由 ====================
+// ==================== [N] 漫剧进度和生成路由 ====================
 
 app.get(`${PREFIX}/series/:id/batch-status`, async (c) => {
   try {
@@ -5114,7 +5283,7 @@ app.post(`${PREFIX}/series/:id/generate`, async (c) => {
   } catch (error: any) { console.error('[POST /series/:id/generate] Error:', error); return c.json({ success: false, error: error.message }, 500); }
 });
 
-// ==================== AI 剧集生成（替代原503桩路由） ====================
+// ==================== [N] AI 剧集生成（替代原503桩路由） ====================
 // 下方三个路由为 v5.0.2 完整实现，替代旧的 503 stub
 
 app.post(`${PREFIX}/series/:id/generate-episodes-ai`, async (c) => {
@@ -5135,12 +5304,24 @@ app.post(`${PREFIX}/series/:id/generate-episodes-ai`, async (c) => {
 
     if (VOLCENGINE_API_KEY || ALIYUN_BAILIAN_API_KEY) {
       try {
-        const prompt = `你是一位专业的漫剧编剧。请根据以下信息，为漫剧创作${totalEpisodes}集的详细大纲。\n\n漫剧标题：${series.title}\n剧集简介：${series.description || '未提供'}\n${series.genre ? `类型：${series.genre}` : ''}\n${series.theme ? `主题：${series.theme}` : ''}\n\n请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：\n[{"episodeNumber":1,"title":"集标题","synopsis":"50-80字简介","growthTheme":"成长主题","keyMoments":["场景1","场景2"]}]\n\n要求：每集标题简洁有力，【最重要的规则】你的所有创作内容必须100%围绕上面给出的漫剧标题和简介来展开！禁止编造与标题和简介无关的故事。角色名、职业、背景必须与用户提供的标题/简介/类型保持一致。每一集的剧情都必须是用户给定主题的自然延伸。\\n\\n要求：\\n1. 每集标题简洁有力，必须与漫剧主题相关\\n2. 故事线有递进和转折，前期建立世界观，中期���展冲突，后期走向高潮和结局\\n3. 所有角色��事件、场景必须紧扣用户给定的标题「${series.title}」\\n4. 如果用户提供了具体简介，每集剧情必须是该简介故事的具体展开`;
-        // v6.0.35: 修复大纲prompt中Unicode乱码（用户??定→用户给定, 标???→标题）+双反斜杠修复
-        const promptFixed = `你是一位专业的漫剧编剧。请根据以下信息，为漫剧创作${totalEpisodes}集的详细大纲。\n\n漫剧标题：${series.title}\n剧集简介：${series.description || '未提供'}\n${series.genre ? `类型：${series.genre}` : ''}\n${series.theme ? `主题：${series.theme}` : ''}\n\n请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：\n[{"episodeNumber":1,"title":"集标题","synopsis":"50-80字简介","growthTheme":"成长主题","keyMoments":["场景1","场景2"]}]\n\n要求：每集标题简洁有���，【最重要的规则】你的所有创作内容必须100%围绕上面给出的漫剧标题和简介来展开！禁止编造与主题和简介无关的故事。角色名、职业、背景必须与用户提供的标题/简介/类型保持一致。每一集的剧情都必须是用户给定主题的自然延伸。\n\n要求：\n1. 每集标题简洁有力，必须与漫剧主题相关\n2. 故事线有递进和转折，前期建立世界观，中期发展冲突，后期走向高潮和结局\n3. 所有角色、事件、场景必须紧扣用户给定的标题「${series.title}」\n4. 如果用户提供了具体简介，每集剧情必须是该简介故事的具体展开`;
+        // v6.0.175: removed dead `prompt` variable (was superseded by `promptFixed` at v6.0.35)
+        // v6.0.35+v6.0.176: 修复大纲prompt中Unicode乱码+统一转义风格（\\n→\n）
+        const promptFixed = `你是一位专业的漫剧编剧。请根据以下信息，为漫剧创作${totalEpisodes}集的详细大纲。\n\n漫剧标题：${series.title}\n剧集简介：${series.description || '未提供'}\n${series.genre ? `类型：${series.genre}` : ''}\n${series.theme ? `主题：${series.theme}` : ''}\n\n请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：\n[{"episodeNumber":1,"title":"集标题","synopsis":"50-80字简介","growthTheme":"成长主题","keyMoments":["场景1","场景2"]}]\n\n要求：每集标题简洁有力，【最重要的规则】你的所有创作内容必须100%围绕上面给出的漫剧标题和简介来展开！禁止编造与标题和简介无关的故事。角色名、职业、背景必须与用户提供的标题/简介/类型保持一致。每一集的剧情都必须是用户给定主题的自然���伸。`;
+        // v6.0.176: orphaned line removed; second-half prompt rebuilt below with unified \n escaping
+        const promptPart2 = [
+          '',
+          '',
+          '要求：',
+          '1. 每集标题简洁有力，必须与漫剧主题相关',
+          '2. 故事线有递进和转折，前期建立世界观，中期发展冲突，后期走向高潮和结局',
+          '3. 所有角色、事件、场景必须紧扣用户给定的标题「' + series.title + '」',
+          '4. 如果用户提供了具体简介，每集剧情必须是该简介故事的具体展开',
+        ].join('\n');
+        const promptFinal = promptFixed + promptPart2;
+
         // v6.0.19: callAI 多模型路由（heavy tier — 多集大纲生成）
         const aiResult = await callAI({
-          messages: [{ role: 'user', content: promptFixed }],
+          messages: [{ role: 'user', content: promptFinal }],
           tier: 'heavy',
           temperature: 0.8,
           max_tokens: 6000,
@@ -5226,7 +5407,7 @@ app.post(`${PREFIX}/episodes/:id/generate-storyboards-ai`, async (c) => {
     // v6.0.15: 查询角色和相邻剧集上下文，增强分镜连贯性
     const { data: sbChars } = await supabase.from('series_characters')
       .select('name, role, appearance').eq('series_id', episode.series_id).limit(5);
-    const sbCharBlock = (sbChars || []).map((ch: any) => `${ch.name}(${ch.role}): ${ch.appearance || '标准外��'}`).join('; ');
+    const sbCharBlock = (sbChars || []).map((ch: any) => `${ch.name}(${ch.role}): ${ch.appearance || '标准外貌'}`).join('; ');
 
     // v6.0.23: 并行查询前后集上下文
     let prevEpCtx = '', nextEpCtx = '';
@@ -5276,16 +5457,16 @@ app.post(`${PREFIX}/episodes/:id/generate-storyboards-ai`, async (c) => {
         // NOTE: sbPrompt2 is immediately overwritten below, this initial value is a legacy placeholder
         let sbPrompt2: string = '';
         // (legacy initial prompt removed — overwritten below by v6.0.78 prompt)
-        void `你是一位专业的漫画分镜师，擅长为AI视频生成引擎编写高质量分镜。请为以下剧集创作${sceneCount}个分镜场景。\n\n漫剧标题：${series?.title || '未知'}\n剧集标题：${episode.title}\n剧集简��：${episode.synopsis || '未提供'}\n\n请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：\n[{"sceneNumber":1,"description":"场景详细描述(50-100字,含主体外貌+连续动作+环境+光影)","dialogue":"角色对话","location":"场景地点","timeOfDay":"早晨/上午/���午/下午/傍晚/夜晚","cameraAngle":"近景/中景/远景/全景/特写/俯拍/仰拍","duration":8,"emotionalTone":"情感基调"}]`;
+        void `你是一位专业的漫画分镜师，擅长为AI视频生成引擎编写高质量分镜。请为以下剧集创作${sceneCount}个分镜场景。\n\n漫剧标题：${series?.title || '未知'}\n剧集标题：${episode.title}\n剧集简介：${episode.synopsis || '未提供'}\n\n请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：\n[{"sceneNumber":1,"description":"场景详细描述(50-100字,含主体外貌+连续动作+环境+光影)","dialogue":"角色对话","location":"场景地点","timeOfDay":"早晨/上午/中午/下午/傍晚/夜晚","cameraAngle":"近景/中景/远景/全景/特写/俯拍/仰拍","duration":8,"emotionalTone":"情感基调"}]`;
         // v6.0.15: 追加角色、风格、邻集上下文 + 场景衔接要求
         // v6.0.35→v6.0.36: 覆盖修复Unicode乱码+注入专业视听语言知识
         // v6.0.78: 重写分镜prompt——强化衔接+角色一致性+characters字段
-        sbPrompt2 = `你是一位${sbPtInfo.label}级别的专业分镜师兼摄影指导，精通视听语言理论，擅长为AI视频生成引擎编写电影级分镜。请为以下剧集创作${sceneCount}个分镜场景。\n\n漫剧标题：${series?.title || '未知'}\n��集标题：${episode.title}\n剧集简介：${episode.synopsis || '未提供'}\n\n请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：\n[{"sceneNumber":1,"description":"场景详细描述(50-100字,含主体外貌+连续动作+环境+光影)","dialogue":"角色全名：对话内容(每场景必填2-3句推动剧情的对话,格式如:林小雨：我不会放弃的\\n张明：你确定吗)","location":"场景地点","timeOfDay":"早晨/上午/中午/下午/傍晚/夜晚","cameraAngle":"近景/中景/远景/全景/特写/俯拍/仰拍","characters":["本场景出���角色全名1","角色全名2"],"duration":10,"emotionalTone":"情感基调","transitionFromPrevious":"与上一场景的镜头衔接(第1个场景写开场)","endingVisualState":"本场景结束时画面状态(20字)"}]`;
+        sbPrompt2 = `你是一位${sbPtInfo.label}级别的专业分镜师兼摄影指导，精通视听语言理论，擅长为AI视频生成引擎编写电影级分镜。请为以下剧集创作${sceneCount}个分镜场景。\n\n漫剧标题：${series?.title || '未知'}\n剧集标题：${episode.title}\n剧集简介：${episode.synopsis || '未提供'}\n\n请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：\n[{"sceneNumber":1,"description":"场景详细描述(50-100字,含主体外貌+连续动作+环境+光影)","dialogue":"角色全名：对话内容(每场景必填2-3句推动剧情的对话,格式如:林小雨：我不会放弃的\\n张明：你确定吗)","location":"场景地点","timeOfDay":"早晨/上午/中午/下午/傍晚/夜晚","cameraAngle":"近景/中景/远景/全景/特写/俯拍/仰拍","characters":["本场景出场角色全名1","角色全名2"],"duration":10,"emotionalTone":"情感基调","transitionFromPrevious":"与上一场景的镜头衔接(第1个场景写开场)","endingVisualState":"本场景结束时画面状态(20字)"}]`;
         // v6.0.112: 修复sbPrompt2内残留的Unicode乱码（剧集标题/出场角色）
         sbPrompt2 = sbPrompt2.replace(/\\n.{1,6}集标题：/, '\\n剧集标题：').replace(/本场景出.{1,6}角色全名1/, '本场景出场角色全名1');
         const extraCtx: string[] = [];
         // v6.0.36: 注入专业景别编排知识+蒙太奇技法
-        extraCtx.push(`\n【景别编排节奏】场景cameraAngle须形成变化：开场远景→中景互动→中近景情感→特写高潮→中景推进→远景收尾。禁止连续3场景相同景别。蒙太奇：对比(明暗对比)/平行(双线交叉)/隐喻(笼中鸟暗喻束缚)。`);
+        extraCtx.push(`\n【景别编排节奏】场景cameraAngle须形成变化：开场远景→中景互动→中近景情感→特写高潮→中景推进→远景收尾。禁止连续3场景相同景别。蒙太奇：对比(明暗对比)/平行(双线��叉)/隐喻(笼中鸟暗喻束缚)。`);
         if (sbCharBlock) extraCtx.push(`\n【角色外貌卡】${sbCharBlock}`);
         if (sbStyleGuide) extraCtx.push(`\n【视觉风格】${sbStyleGuide.substring(0, 300)}`);
         else if (sbBaseStyle) extraCtx.push(`\n【画面风格】${sbBaseStyle}`);
@@ -5296,25 +5477,25 @@ app.post(`${PREFIX}/episodes/:id/generate-storyboards-ai`, async (c) => {
         // v6.0.20: 大幅强化场景连贯性要求
         extraCtx.push(`\n【场景连贯性——最高优先级要求】
 1. 角色一致性：同一角色在所有场景中服装/发型/配饰/体型必须完全一致，描述中必须出现具体角色名和完整外貌特征（不可用"他""她"代替）
-2. 环境连续性：同一地点的场景，环境细节（天气/光线/家具/陈设/季节）必须保持一致；转换��点时必须描述转场过程
-3. 时间连续性：注明每个场景的时段（早晨/上��/中午/下午/傍晚/夜晚），相邻场景时间必须合理衔接，禁止无理由跳跃
+2. 环境连续性：同一地点的场景，环境细节（天气/光线/家具/陈设/季节）必须保持一致；转换地点时必须描述转场过程
+3. 时间连续性：注明每个场景的时段（早晨/上午/中午/下午/傍晚/夜晚），相邻场景时间必须合理衔接，禁止无理由跳跃
 4. 情感过渡：情感基调变化必须渐进（如平静→好奇→紧张→恐惧），禁止跳跃式突变
 5. 动作连贯：上一场景角色"走向门口"，下一场景必须从"推开门"或"门外"开始，禁止空间跳跃
-6. 视觉构图��进：镜头语言应有节奏感——远景建立环境→中景交代人物→近景推进情感→特写强化冲突，避免连续相同机位
+6. 视觉构图递进：镜头语言应有节奏感——远景建立环境→中景交代人物→近景推进情感→特写强化冲突，避免连续相同机位
 7. 对话角色锁定：dialogue字段必须标注说话者角色名（格式："角色名：对话内容"），同一角色的语气/口头禅必须前后一致，禁止张冠李戴
 8. 角色出场追踪：每个场景的description必须明确列出该场景中出场的所有角色全名及其当前动作/位置，禁止用代词模糊指代`);
         // v6.0.34: Seedance 2.0 视频生成优化——指导AI写出更适合视频引擎的分镜描述
-        extraCtx.push(`\n【视频生成优化——description写法���南】\n1. 结构：「主体外貌特征 + 连续动作(3-4步) + 场景环境 + 光影氛围���\n2. 动作拆解示例：不写"她跳舞"，写"她右脚轻点地面→身体缓缓旋转→裙摆随惯性展开→双臂向两侧舒展"\n3. 光影必写：每个场景必须包含光源描述（如"窗外暖阳斜射""头顶日光灯冷白光""街边霓虹灯红蓝交替"）\n4. 禁止抽象词：不写"激烈战斗"写"右拳挥出→对方侧身闪避→回身一脚踢向腰部→对方后退两步撞上墙壁"`);
+        extraCtx.push(`\n【视频生成优化——description写法指南】\n1. 结构：「主体外貌特征 + 连续动作(3-4步) + 场景环境 + 光影氛围」\n2. 动作拆解示例：不写"她跳舞"，写"她右脚轻点地面→身体缓缓旋转→裙摆随惯性展开→双臂向两侧舒展"\n3. 光影必写：每个场景必须包含光源描述（如"窗外暖阳斜射""头顶日光灯冷白光""街边霓虹灯红蓝交替"）\n4. 禁止抽象词：不写"激烈战斗"写"右拳挥出→对方侧身闪避→回身一脚踢向腰部→对方后退两步撞上墙壁"`);
         // v6.0.112: 修复description写法指南条目的Unicode乱码（指南/氛围）
-        extraCtx[extraCtx.length - 1] = `\n【视频生成优化——description写法指南】\n1. 结构：「主体外貌特征 + 连续动作(3-4步) + 场景环境 + 光影氛围」\n2. 动作拆解示例：不写"她跳舞"，写"她右脚轻点地面→身体缓缓旋转→裙摆随惯性展开→双臂向两侧舒展"\n3. 光影必写：每个场景必须包含光源描述（如"窗外暖阳斜射""头顶日光灯冷白光""街边霓虹灯红蓝交替"）\n4. 禁止抽象词：不写"激烈战斗"写"右拳挥出→对方侧身闪避���回身一脚踢向腰部→对方后退两步撞上墙壁"`;
-        if (prevEpCtx) extraCtx.push(`\n第1个场景必须承接上一集结尾——描述中明确体现从上集最后画面过渡到本集开场的衔接。`);
+        extraCtx[extraCtx.length - 1] = `\n【视频生成优化——description写法指南】\n1. 结构：「主体外貌特征 + 连续动作(3-4步) + 场景环境 + 光影氛围」\n2. 动作拆解示例：不写"她跳舞"，写"她右脚轻点地面→身体缓缓旋转→裙摆随惯性展开→双臂向两侧舒展"\n3. 光影必写：每个场景必须包含光源描述（如"窗外暖阳斜射""头顶日光灯冷白光""街边霓虹灯红蓝交替"）\n4. 禁止抽象词：不写"激烈战斗"写"右拳挥出→对方侧身闪避→回身一脚踢向腰部→对方后退两步撞上墙壁"`;
+        if (prevEpCtx) extraCtx.push(`\n第1个场景必须衔接上一集结尾——描述中明确体现从上集最后画面过渡到本集开场的衔接。`);
         // v6.0.69: 反重复+中国审美+角色语言个性化
-        extraCtx.push(`\n【严禁重复——红线规则】\n1. 不同场景的description禁止出现相同或近似的动作描写或情节，每个场景必须推进新剧���事件\n2. dialogue中同一角色不可在不同场景说出含义相似的话，禁止车轱辘对话\n3. 同集内禁止出现相同location+相同动作的场景组合\n4. 如果上一场景是对话推进，下一场景必须是行动/事件而非再次对话`);
+        extraCtx.push(`\n【严禁重复——红线规则】\n1. 不同场景的description禁止出现相同或近似的动作描写或情节，每个场景必须推进新剧情事件\n2. dialogue中同一角色不可在不同场景说出含义相似的话，禁止车轱辘对话\n3. 同集内禁止出现相同location+相同动作的场景组合\n4. 如果上一场景是对话推进，下一场景必须是行动/事件而非再次对话`);
         extraCtx.push(`\n【中国审美与价值观】\n1. 人物形象精致优美：五官端正比例协调、气质自然不夸张、衣着得体有品位\n2. 场景环境美观：注重构图美感、色彩和谐、光影层次\n3. 情节传递正向价值：勇气/善良/成长/责任/家国情怀\n4. 角色语言得体：符合角色身份和年龄，避免不符合国情的表达方式`);
         // v6.0.63: 对白匹配+角色出场追踪规则
         extraCtx.push(`\n【对话与角色匹配——严格要求】\n1. dialogue字段中每句对话必须标明说话者全名（格式："陈世美：我是冤枉的"），禁止无名对话\n2. dialogue中出现的角色必须在同一场景的description中已明确出场，禁止幽灵角色说话\n3. 同一角色的语气/称谓/口头禅必须全剧一致\n4. 多角色对话场景必须在description中交代所有参与者的位置和朝向`);
         // v6.0.84: dialogue必填强制规则
-        extraCtx.push(`\n【对白必填——核心要求】dialogue字段严禁为空！每个场景至少2-3句角色对话，对话须推动剧情、揭示性格或��造冲突。唯一例外：纯动作追逐场景可写"角色名：(内心)独白内容"。`);
+        extraCtx.push(`\n【对白必填——核心要求】dialogue字段严禁为空！每个场景至少2-3句角色对话，对话须推动剧情、揭示性格或制造冲突。唯一例外：纯动作追逐场景可写"角色名：(内心)独白内容"。`);
         sbPrompt2 += extraCtx.join('');
         // v6.0.19: callAI 多模型路由（heavy tier — 分镜创作）
         // v6.0.84: max_tokens 6000→7000（单集6场景+必填对话增大输出量）
@@ -5340,10 +5521,13 @@ app.post(`${PREFIX}/episodes/:id/generate-storyboards-ai`, async (c) => {
     }
 
     if (sbOutlines.length === 0) {
-      const tpls = [
+      const tpls: { desc: string; cam: string; tone: string }[] = [
         { desc: '开场画面，建立场景氛围', cam: '远景', tone: '期待' },
         { desc: '角色登场，展现人物状态', cam: '中景', tone: '自然' },
-        { desc: '关���对话，推动剧情', cam: '中近景', tone: '认真' },
+        { desc: '关键对话，推动剧情', cam: '中近景', tone: '认真' },
+        { desc: '冲突或转折发生', cam: '特写', tone: '紧张' },
+        { desc: '展现人物状态', cam: '中景', tone: '自然' },
+        { desc: '关键对话，推动剧情', cam: '中近景', tone: '认真' },
         { desc: '冲突或转折发生', cam: '特写', tone: '紧张' },
         { desc: '角色做出选择', cam: '中景', tone: '坚定' },
         { desc: '行动场景', cam: '中景', tone: '激动' },
@@ -5352,6 +5536,12 @@ app.post(`${PREFIX}/episodes/:id/generate-storyboards-ai`, async (c) => {
       ];
       // v6.0.112: 修复tpls[2]描述中的Unicode乱码（关键→关键）
       tpls[2].desc = '关键对话，推动剧情';
+      // v6.0.160: 运行时修复tpls中所有含U+FFFD的desc字段
+      for (const t of tpls) {
+        if (t.desc && /\uFFFD/.test(t.desc)) {
+          t.desc = t.desc.replace(/\uFFFD+/g, '');
+        }
+      }
       sbOutlines = Array.from({ length: Math.min(sceneCount, 12) }, (_, i) => {
         const t = tpls[i % tpls.length];
         return { sceneNumber: i + 1, description: `${episode.title} - 场景${i + 1}：${t.desc}`, dialogue: '', location: '', timeOfDay: i < sceneCount / 2 ? '白天' : '夜晚', cameraAngle: t.cam, duration: 10, emotionalTone: t.tone };
@@ -5371,13 +5561,30 @@ app.post(`${PREFIX}/episodes/:id/generate-storyboards-ai`, async (c) => {
       duration: sb.duration || 10, emotional_tone: sb.emotionalTone || sb.emotional_tone || '', status: 'draft',
     }));
 
-    const { data: insertedSbs, error: sbInsertErr } = await supabase.from('series_storyboards').upsert(sbRows, { onConflict: 'series_id,episode_number,scene_number' }).select();
+    // v6.0.160: Protect scenes with existing videos from overwrite
+    let sbRowsFiltered = sbRows;
+    const { data: existingVideoSbs } = await supabase.from('series_storyboards')
+      .select('scene_number, video_url')
+      .eq('series_id', episode.series_id)
+      .eq('episode_number', episode.episode_number)
+      .not('video_url', 'is', null);
+    if (existingVideoSbs && existingVideoSbs.length > 0) {
+      const protectedScenes = new Set(
+        existingVideoSbs.filter((s: any) => s.video_url && s.video_url.startsWith('http')).map((s: any) => s.scene_number)
+      );
+      if (protectedScenes.size > 0) {
+        sbRowsFiltered = sbRows.filter((r: any) => !protectedScenes.has(r.scene_number));
+        console.log(`[AI] generate-storyboards-ai: ⚠️ PROTECTED ${sbRows.length - sbRowsFiltered.length} scenes with existing videos`);
+      }
+    }
+
+    const { data: insertedSbs, error: sbInsertErr } = await supabase.from('series_storyboards').upsert(sbRowsFiltered, { onConflict: 'series_id,episode_number,scene_number' }).select();
     if (sbInsertErr) {
       console.error('[AI] generate-storyboards-ai: DB upsert error:', sbInsertErr.message);
       return c.json({ success: false, error: `数据库写入失败: ${sbInsertErr.message}` }, 500);
     }
 
-    console.log(`[AI] generate-storyboards-ai: Created ${insertedSbs?.length || 0} storyboards`);
+    console.log(`[AI] generate-storyboards-ai: Created ${insertedSbs?.length || 0} storyboards (${sbRows.length - sbRowsFiltered.length} protected)`);
     return c.json({ success: true, data: toCamelCase(insertedSbs || []), count: insertedSbs?.length || 0, fallback: !ALIYUN_BAILIAN_API_KEY });
   } catch (error: any) {
     console.error('[AI] generate-storyboards-ai error:', truncateErrorMsg(error));
@@ -5386,28 +5593,43 @@ app.post(`${PREFIX}/episodes/:id/generate-storyboards-ai`, async (c) => {
 });
 
 app.post(`${PREFIX}/series/:id/generate-full-ai`, async (c) => {
+  // v6.0.158: Hoist termination-protection variables OUTSIDE try block so catch can access them
+  // (v6.0.142-147 declared them inside try → ReferenceError in catch due to let block scoping)
+  let _generationCompleted = false;
+  let _allBatchesWritten = false;
+  let _cleanupHandler: (() => void) | null = null;
   try {
     const seriesId = c.req.param('id');
     const body = await c.req.json();
 
     // v6.0.75: 增加 status + updated_at 用于幂等性防护
+    // v6.0.143: 增加 generation_progress 用于区分"创建路由预设generating"和"真正在生成中"
     const { data: series, error: seriesErr } = await supabase
-      .from('series').select('id, title, description, genre, style, theme, total_episodes, coherence_check, story_outline, status, updated_at').eq('id', seriesId).maybeSingle();
+      .from('series').select('id, title, description, genre, style, theme, total_episodes, coherence_check, story_outline, status, updated_at, generation_progress').eq('id', seriesId).maybeSingle();
     if (seriesErr || !series) return c.json({ success: false, error: seriesErr?.message || '漫剧不存在' }, 404);
 
     // v6.0.94: 幂等性防护窗口 3分钟→10分钟（每批次AI+retry需~3min，防止双批次~6min内被误判为卡住）
     // v6.0.75原始逻辑：3分钟内的generating状态阻止重复请求
     // v6.0.115: forceRetry=true 时跳过幂等性检查（修复: retrySeries先更新updated_at→generate-full-ai看到fresh updated_at→静默BLOCK→重试永远不生效）
+    // v6.0.143: 修复 v6.0.87 竞态——创建路由预设status='generating'但不设generation_progress
+    //           → 首次generate-full-ai被幂等性守卫误拦截 → episodes永远不生成 → 显示0/0集
+    //           修复: generation_progress为null说明updateProgress从未调用过（无真正生成进程），放行
     const forceRetry = body.forceRetry === true;
     if (series.status === 'generating' && !forceRetry) {
-      const updatedAt = series.updated_at ? new Date(series.updated_at).getTime() : 0;
-      const elapsedMs = Date.now() - updatedAt;
-      if (elapsedMs < 10 * 60 * 1000) {
-        console.warn(`[AI] generate-full-ai: BLOCKED duplicate request for series=${seriesId} (status=generating, updated ${Math.round(elapsedMs / 1000)}s ago)`);
-        return c.json({ success: true, data: { message: '生成任务已在进行中，���等待完成', alreadyGenerating: true }, alreadyGenerating: true });
+      const hasActiveGeneration = series.generation_progress != null;
+      if (hasActiveGeneration) {
+        const updatedAt = series.updated_at ? new Date(series.updated_at).getTime() : 0;
+        const elapsedMs = Date.now() - updatedAt;
+        if (elapsedMs < 10 * 60 * 1000) {
+          console.warn(`[AI] generate-full-ai: BLOCKED duplicate request for series=${seriesId} (status=generating, progress=${JSON.stringify(series.generation_progress)?.substring(0, 80)}, updated ${Math.round(elapsedMs / 1000)}s ago)`);
+          return c.json({ success: true, data: { message: '生成任务已在进行中，请等待完成', alreadyGenerating: true }, alreadyGenerating: true });
+        }
+        // 超过10分钟的generating状态视为卡住，允许重新生成
+        console.warn(`[AI] generate-full-ai: Stale generating status for series=${seriesId} (${Math.round(elapsedMs / 1000)}s old), allowing re-generation`);
+      } else {
+        // v6.0.143: generation_progress 为 null → 创建路由预设了 generating 但尚未有真正的生成进程
+        console.log(`[AI] generate-full-ai: series=${seriesId} has status=generating but NO generation_progress — first call after creation, allowing`);
       }
-      // 超过10分钟的generating状态视为卡住，允许重新生成
-      console.warn(`[AI] generate-full-ai: Stale generating status for series=${seriesId} (${Math.round(elapsedMs / 1000)}s old), allowing re-generation`);
     }
     if (forceRetry) {
       console.log(`[AI] generate-full-ai: forceRetry=true, bypassing idempotency guard for series=${seriesId}`);
@@ -5448,87 +5670,191 @@ app.post(`${PREFIX}/series/:id/generate-full-ai`, async (c) => {
 
     await updateProgress(0, 6, '准备中...');
 
-    // ===== Steps 1+2 并行: 剧集大纲 + 角色（互不依赖，并行省~60s） =====
-    // v6.0.93: 原串行流程约需 120s(大纲)+60s(角色)=180s；并行后关键路径仅120s
-    await updateProgress(1, 6, '正在并行生成剧集大纲���角色...');
+    // v6.0.142: Edge Function 终止保护——注册 beforeunload 监听器
+    // 当 Supabase Edge Function 达到 wall-clock 限制被终止时，Deno 会触发 beforeunload 事件
+    // 利用此事件将 series 状态标记为 failed，避免永久卡在 'generating'
+    // v6.0.158: _generationCompleted, _allBatchesWritten, _cleanupHandler declarations hoisted before try block
+    _cleanupHandler = () => {
+      if (_generationCompleted) return;
+      // v6.0.147: if all batches were written to DB, set 'draft' not 'failed'
+      const _termStatus = _allBatchesWritten ? 'draft' : 'failed';
+      console.warn(`[AI] generate-full-ai: ⚠️ Edge Function terminating! Writing status='${_termStatus}' for series=${seriesId} (allBatchesWritten=${_allBatchesWritten})`);
+      const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if (supabaseUrl && serviceKey) {
+        fetch(`${supabaseUrl}/rest/v1/series?id=eq.${seriesId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}`, 'apikey': serviceKey, 'Prefer': 'return=minimal' },
+          keepalive: true,
+          body: JSON.stringify({
+            status: _termStatus,
+            generation_progress: _allBatchesWritten
+              ? { currentStep: 6, totalSteps: 6, stepName: '生成完成(超时前已写入)', completedAt: new Date().toISOString() }
+              : { currentStep: 0, totalSteps: 6, stepName: 'Edge Function 执行超时', error: 'Edge Function wall-clock timeout — 生成管线被强制终止。请点击"重新创作"重试。', failedAt: new Date().toISOString() },
+            updated_at: new Date().toISOString(),
+          }),
+        }).catch(() => { /* best-effort */ });
+      }
+    };
+    globalThis.addEventListener('beforeunload', _cleanupHandler);
 
-    // --- 构建大纲 prompt（与原Step1完全一致）---
+    // v6.0.149: Continuation mode — when episodes already exist (e.g. after timeout/crash),
+    // skip Steps 1-4 and only generate storyboards for episodes that don't have them yet.
+    let _continuationMode = false;
+    let _contEpOutlines: any[] = [];
+    let _contCharRows: any[] = [];
+    let _contCreatedChars: any[] | undefined;
+    let _contCreatedEpisodes: any[] | undefined;
+    let _contVisualStyleGuide = '';
+    let _contEpFilter: Set<number> | null = null;
+    // v6.0.150: Track existing scene_numbers per episode to skip them during upsert
+    let _contExistingScenes: Map<number, Set<number>> | null = null;
+    // v6.0.151: Full scene data for prompt context — AI sees existing scenes and only generates missing ones
+    let _contExistingSceneData: Map<number, Array<{ scene_number: number; description: string; dialogue: string; characters: any; location: string; time_of_day: string; camera_angle: string; emotional_tone: string }>> | null = null;
+
+    try {
+      const { data: existingEps } = await supabase.from('series_episodes')
+        .select('*')
+        .eq('series_id', seriesId)
+        .order('episode_number', { ascending: true });
+
+      if (existingEps && existingEps.length > 0) {
+        // v6.0.175: parallelize storyboards + characters fetch (independent queries)
+        const [{ data: existingSbs }, { data: existingChars }] = await Promise.all([
+          supabase.from('series_storyboards')
+            .select('episode_number, scene_number, description, dialogue, characters, location, time_of_day, camera_angle, emotional_tone')
+            .eq('series_id', seriesId)
+            .order('episode_number', { ascending: true })
+            .order('scene_number', { ascending: true }),
+          supabase.from('series_characters').select('*').eq('series_id', seriesId),
+        ]);
+        const sbCountByEp = new Map<number, number>();
+        // v6.0.150: Also collect scene_numbers per episode for scene-level filtering
+        const sbScenesByEp = new Map<number, Set<number>>();
+        // v6.0.151: Collect full scene data per episode for prompt context injection
+        const sbDataByEp = new Map<number, Array<{ scene_number: number; description: string; dialogue: string; characters: any; location: string; time_of_day: string; camera_angle: string; emotional_tone: string }>>();
+        for (const sb of (existingSbs || [])) {
+          sbCountByEp.set(sb.episode_number, (sbCountByEp.get(sb.episode_number) || 0) + 1);
+          if (!sbScenesByEp.has(sb.episode_number)) sbScenesByEp.set(sb.episode_number, new Set());
+          sbScenesByEp.get(sb.episode_number)!.add(sb.scene_number);
+          // v6.0.151: Store full scene data
+          if (!sbDataByEp.has(sb.episode_number)) sbDataByEp.set(sb.episode_number, []);
+          sbDataByEp.get(sb.episode_number)!.push({
+            scene_number: sb.scene_number,
+            description: sb.description || '',
+            dialogue: sb.dialogue || '',
+            characters: sb.characters || [],
+            location: sb.location || '',
+            time_of_day: sb.time_of_day || '',
+            camera_angle: sb.camera_angle || '',
+            emotional_tone: sb.emotional_tone || '',
+          });
+        }
+        // v6.0.149: Also catch partial storyboard episodes (e.g. 3/6 scenes written before crash)
+        const CONT_EXPECTED_SCENES = 6; // matches scenesPerEp defined later
+        const epsNeedingSb = existingEps.filter(ep => (sbCountByEp.get(ep.episode_number) || 0) < CONT_EXPECTED_SCENES);
+        // existingChars already fetched in parallel above (v6.0.175)
+
+        if (epsNeedingSb.length > 0 && existingChars && existingChars.length > 0) {
+          _continuationMode = true;
+          _contEpFilter = new Set(epsNeedingSb.map(ep => ep.episode_number));
+          _contExistingScenes = sbScenesByEp; // v6.0.150: scene-level skip map
+          _contExistingSceneData = sbDataByEp; // v6.0.151: full scene data for prompt context
+          _contEpOutlines = existingEps.map(ep => {
+            // v6.0.149: Parse META suffix from key_moment to recover cliffhanger/previousEpisodeLink
+            // (Step 4 encodes them as `||META:{...}` suffix in key_moment field)
+            const metaMatch = ep.key_moment?.match(/\|\|META:(.+)$/);
+            let meta: any = {};
+            try { if (metaMatch) meta = JSON.parse(metaMatch[1]); } catch { /* ignore parse error */ }
+            const cleanKeyMoment = ep.key_moment ? ep.key_moment.replace(/\s*\|\|META:.+$/, '') : '';
+            return {
+              episodeNumber: ep.episode_number, title: ep.title, synopsis: ep.synopsis,
+              growthTheme: ep.growth_theme,
+              keyMoments: cleanKeyMoment ? cleanKeyMoment.split('; ').filter(Boolean) : [],
+              cliffhanger: meta.cliffhanger || '',
+              previousEpisodeLink: meta.previousEpisodeLink || '',
+            };
+          });
+          _contCharRows = existingChars.map(ch => ({
+            series_id: seriesId, name: ch.name, role: ch.role,
+            description: ch.description, appearance: ch.appearance, personality: ch.personality,
+          }));
+          _contCreatedChars = existingChars;
+          _contCreatedEpisodes = existingEps;
+          _contVisualStyleGuide = series.coherence_check?.visualStyleGuide || '';
+          // v6.0.150: Log existing scene counts for scene-level skip visibility
+          const existingSceneSummary = epsNeedingSb.map(ep => `E${ep.episode_number}:${sbScenesByEp.get(ep.episode_number)?.size || 0}/6`).join(',');
+          console.log(`[AI] generate-full-ai: CONTINUATION MODE — ${existingEps.length} episodes exist, ${epsNeedingSb.length}/${existingEps.length} need storyboards [${existingSceneSummary}], ${existingChars.length} characters ready. Skipping Steps 1-4.`);
+          await updateProgress(4, 6, `续接模式：${existingEps.length}集已存在，${epsNeedingSb.length}集需要生成分镜...`);
+        } else if (epsNeedingSb.length === 0 && existingSbs && existingSbs.length > 0) {
+          console.log(`[AI] generate-full-ai: All ${existingEps.length} episodes already have storyboards — marking completed`);
+          _generationCompleted = true;
+          globalThis.removeEventListener('beforeunload', _cleanupHandler);
+          await supabase.from('series').update({
+            status: 'completed',
+            generation_progress: { currentStep: 6, totalSteps: 6, stepName: '创作完成(续接检测)', completedAt: new Date().toISOString() },
+            updated_at: new Date().toISOString(),
+          }).eq('id', seriesId);
+          return c.json({ success: true, data: { message: '所有分集已有分镜，标记为完成', continuationComplete: true } });
+        }
+      }
+    } catch (contErr: any) {
+      console.warn('[AI] generate-full-ai: Continuation check failed, proceeding with full generation:', contErr?.message);
+    }
+
+    // v6.0.149: Declare variables used across Steps 1-5 (must be in scope for both normal and continuation paths)
+    let visualStyleGuide = '';
+    const baseStylePrompt = STYLE_PROMPTS[seriesStyle] || STYLE_PROMPTS.realistic;
+
+    // v6.0.149: Hoist variable declarations — used by both normal (Steps 1-4) and continuation paths
     let episodeOutlines: any[] = [];
-    // v6.0.93: 声明在外层作用域，通过闭包赋值（取代旧的单独Step2）
     let characterRows: any[] = [];
     let createdChars: any[] | undefined;
+    let createdEpisodes: any[] | undefined;
+
+    // v6.0.159: Hoist creativeSeed to outer scope — used by both episode outline (Step 1-2) and storyboard (Step 5) prompts
+    const creativeSeed = getCreativeSeed(seriesId);
+    console.log(`[AI] generate-full-ai: Creative seed — archetype=${creativeSeed.archetype.substring(0, 20)}, motif=${creativeSeed.motif.substring(0, 15)}, cultural=${creativeSeed.cultural.substring(0, 15)}`);
+
+    // v6.0.149: Skip Steps 1-4 in continuation mode (episodes/characters/style already exist)
+    if (!_continuationMode) {
+    // ===== Steps 1+2 并行: 剧集大纲 + 角色（互不依赖，并行省~60s） =====
+    // v6.0.93: 原串行流程约需 120s(大纲)+60s(角色)=180s；并行后关键路径仅120s
+    await updateProgress(1, 6, '正在并行生成剧集大纲与角色...');
+
+    // --- 构建大纲 prompt（与原Step1完全一致）---
+    // v6.0.149: episodeOutlines/characterRows/createdChars/createdEpisodes hoisted above if-block
 
     const ptLabel = (PRODUCTION_TYPE_PROMPTS[productionType] || PRODUCTION_TYPE_PROMPTS.short_drama).label;
     const ptNarrative = (PRODUCTION_TYPE_PROMPTS[productionType] || PRODUCTION_TYPE_PROMPTS.short_drama).narrativeStyle;
 
     if (VOLCENGINE_API_KEY || ALIYUN_BAILIAN_API_KEY) {
       // v6.0.93: Promise.all 并行执行大纲生成 + 角色生成
-      const refImgHintText = referenceImageUrl ? `\n【参考图】用户提供了参考图，请参考其人物形象、服饰风格来设计角色外貌。` : '';
+      // v6.0.157: 参考图通过多模态视觉直接注入（模型能"看"到图片），prompt提示相应升级
+      const refImgHintText = referenceImageUrl ? `\n【参考图分析——已附在消息中】请仔细观察参考图中的人物形象，提取：(a)面部五官风格与比例 (b)发型发色特征 (c)服饰风格与色彩搭配 (d)整体气质与年龄段，以此作为角色外貌设计的核心参考基准。所有角色的视觉风格应与参考图保持统一美学。` : '';
 
+      // v6.0.159: 角色生成prompt全面升级——注入心理学深度+角色悖论+独特语言指纹
       const charPromptLines = [
-        `你是一位超一流的专业漫剧导演和编剧。请根据以下信息，为漫剧创作3-5个主要角色。`,
+        `你是一位融合了鲁迅刻画灵魂、莎士比亚构建悲剧人物、宫崎骏塑造温度的角色设计大师。你深信：伟大的角色不是被"创造"出来的，而是被"发现"的——他们早已存在于故事的必然性中。`,
         ``, `漫剧标题：${series.title}`, `剧集简介：${series.description || '未提供'}`,
-        series.genre ? `类型：${series.genre}` : '', series.theme ? `主题：${series.theme}` : '', ``,
-        `请严格按JSON格式回复（不要markdown），返回数组：`,
-        `[{"name":"角色名","role":"protagonist|supporting|antagonist","description":"角色背景故事(80-120字,含职业/家庭背景/人���关键经历/核心动机/内心矛盾/性格成因)","appearance":"外貌特征(50-80字，必须包含年龄、身高体型、发型发色、面部特征、标志性服装配饰)","personality":"性格���征与说话风格(30-50字,含性格标签+说话习惯+口头禅+情绪表达方式)","relationships":"与其他角色的关系(20-40字,如与XX是青梅竹马/暗恋XX/与XX有仇怨)"}]`,
-        refImgHintText, ``, `要求：`,
-        `1. 必须有1个protagonist，1-2个supporting，可选1个antagonist`,
-        `2. 角色之间要有关联和互动关系`,
-        `3. 【极重要】外貌描述必须极度详细且唯一可辨识：精确年龄(如22岁)、身高(如168cm)、体型(如���细/健壮)、发型发色(如齐肩黑色直发刘海偏左/棕色短寸头)、瞳色(如深棕色/黑色)、肤色(如白皙/小麦色)、面部特征(如瓜子脸高鼻梁/方脸浓眉)、面部微特征(如右嘴角上方有一颗小痣/无痣无疤)、标志性服装(如白色连帽卫衣+牛仔裤/黑色西装)、标志性配饰(如银色项链/圆框眼镜)——越详细AI视频生成角色越一致`,
-        `4. 角色名字、职业、背景必须与标题「${series.title}」和简介匹配`,
-        `5. 同一��色appearance在所有场景保持一致，不要换装换发型`,
-        `6. 【审美要求】角色形象应优美精致，符合当代中国主流审美：五官端正、比例协调、气质自然、衣着得体有品位；主角形象要有辨识度和记忆点；避免夸张怪异的外貌设计`,
-        `7. 【唯一性��点】每个角色必须有至少2个视觉锚点(如：只有她有红色发带+圆框眼镜)，确保不同角色在视觉上绝不混淆`,
-        `8. 【面部微特征锁定】如果角色有痣、疤痕、胎记、酒窝、雀斑等面部微特征，必须精确标注位置(如"左眼角下方2cm处有一颗小痣")；如果没有则明确写"面部无痣无疤"——这些微特征一旦设定，全剧所有场景必须100%位置一致，绝不允许痣从左脸跑到右脸`,
+        series.genre ? `类型：${series.genre}` : '', series.theme ? `主题：${series.theme}` : '',
+        series.story_outline ? `故事大纲：${(series.story_outline || '').substring(0, 400)}` : '',
+        ``, `请设计3-5个让观众"忘不掉"的角色。严格按JSON格式回复（不要markdown），返回数组：`,
+        `[{"name":"角色名(必须有文化厚度:可引经据典/谐音双关/暗含命运线索,如'顾望舒'取自戴望舒的雨巷)","role":"protagonist|supporting|antagonist","description":"角色心理画像(100-150字,必须包含:①职业与社会处境 ②童年关键创伤或温暖记忆(具体到某个画面) ③核心动机(他最想得到什么) ④致命弱点(他最怕失去什么) ⑤角色悖论(表面vs真实——如表面冷漠实则极度害怕被抛弃) ⑥道德灰区(他做过的最有争议的一件事))","appearance":"外貌特征(60-100字,必须包含精确年龄/身高体型/发型发色含刘海方向/瞳色/肤色/面部五官特征/面部微特征如痣疤位置或明确写无痣无疤/标志性服装不超过2套/标志性配饰——外貌要暗示性格:如常咬嘴唇暗示焦虑,永远穿长袖暗示藏���什么)","personality":"语言指纹与行为密码(40-60字,必须包含:①独特的说话节奏如总是先沉默3秒再回答/喜欢用反问句 ②口头禅或标志性小动作如紧张时转笔/说谎时摸耳朵 ③情绪失控时的表现如愤怒时反而笑/难过时会去跑步 ④只有他会说的那种话如用食物比喻一切)","relationships":"角色关系网(30-50字,不止��关系标签,要写关系中的暗流——如:与XX表面是师徒实则她怀疑XX害死了父亲/对XX有愧疚因为当年见死不救)"}]`,
+        refImgHintText, ``, `【��色设计的灵魂铁律】`,
+        `1. 【名字即命运】角色名必须有讲究——可以藏典故(如"陆离"出自"光怪陆离")、暗示结局(如"归雁"注定要离开)、体现身份(如"钱进"讽刺拜金)。严禁路人甲式随意取名`,
+        `2. 【角色悖论必填】每个角色必须有一个让观众"又爱又恨"的矛盾点——好人的自私面/坏人的柔软面/强者的脆弱面。纯好人和纯坏人都是失败的角色设计`,
+        `3. 【语言指纹唯一性】读对话就能猜出是谁说的——学者角色引用诗文/底层角色说方言俚语/压抑角色话少但每句都重/话痨角色用废话掩饰不安。严禁所有角色说话方式雷同`,
+        `4. 【外貌叙事化】外貌不是购物清单而是性格的外化——驼背暗示压力/总穿黑色暗示封闭/戴帽子暗示躲藏。视觉锚点(每角色至少2个独特标识)让AI视频能区分角色`,
+        `5. 【关系暗流】角色间的关系不是简单标签而是一条条暗河——表面的客气下藏着嫉妒、恩情下藏着亏欠、信任下藏着秘密。至少设计2对"看似A实则B"的关系`,
+        `6. 【面部微特征锁定】痣/疤痕/胎记/酒窝的位置必须精确(如"右嘴角上方1cm小痣")或明确写"面部无痣无疤"——全剧位置100%一致`,
+        `7. 【审美基准】角色形象精致优美符合当代中国主流审美:五官端正比例协调,气质自然不夸张;但美的类型要多样——不是所有人都是标准美人,有人美在气质,有人美在眼神,有人美在笑容`,
+        `8. 角色名字、职业、背景必须与标题「${series.title}」和简介完全匹配，禁止创作与主题无关的角色`,
       ].filter(Boolean).join('\n');
-      // v6.0.112: 修复charPromptLines中体型描述的Unicode乱码（纤细）
-      const charPromptLinesFixed = charPromptLines.replace(/体型\(如.{1,6}细\/健壮\)/, '体型(如纤细/健壮)');
-
       try {
-        // v6.0.78: 全面重写剧本生成prompt——提升多样性/创新性/吸引力
-        const epGenPromptLines = [
-          `你是一位拿过金鸡奖/飞天奖的顶级${ptLabel}编剧，也是一位洞察人性的故事大师。你的作品以"意想不到的���节反转""真实到令人心痛的人���命运""让观众欲罢不能的悬念钩子"著称。现在请为${ptLabel}创作${totalEpisodes}集的详细大纲。`,
-          ``,
-          `作品主题：${series.title}`,
-          `剧集简介：${series.description || '未提供'}`,
-          series.genre ? `类型：${series.genre}` : '',
-          series.theme ? `主题：${series.theme}` : '',
-          series.story_outline ? `故事大纲：${(series.story_outline || '').substring(0, 600)}` : '',
-          `作品类型叙事要求：${ptNarrative}`,
-          ``,
-          `请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：`,
-          `[{"episodeNumber":1,"title":"集标题(4-8字,新颖有画面感)","synopsis":"80-120字简介,必须含:本集核心事件+具体角色名+关键转折+情感高潮","growthTheme":"本集主题(不超过6字)","keyMoments":["具体场景1(含角色名和动作)","具体场景2"],"cliffhanger":"本集结尾的具体悬念画面(20-30字)","previousEpisodeLink":"本集开头如何承接上集(第1集写开端)"}]`,
-          ``,
-          `【创作的灵魂——像大导演一样思考】`,
-          `你不是在填表格,你是在创造一部让人上瘾的作品。每一集像一颗精心设计的炸弹：铺垫-引爆-余震-新引线。`,
-          ``,
-          `【顶级剧本6大铁律】`,
-          `1.【��套路】严禁陈词滥调："迎接挑战""获得成长与领悟""在困境中找到力量""命运的齿轮开始转动""坚定了信念"。每一句都必须是具体的、有画面感的、独一无二的事件。`,
-          `2.【人物弧光】主角不是圣人——TA要犯错、要自私、要在道德灰色地带挣扎。好人要有缺点,坏人要有苦衷。`,
-          `3.【钩子设计】每集结尾必须有让观众"不看下集会死"的悬念:震惊的发现/不可能的选择/意外出现的人/改变一切的信。禁止空洞悬念。`,
-          `4.【情节密度】每集至少2个改变角色命运的具体事件。事件有因果链——A做了X导致B发现了Y,于是C不得不做Z。`,
-          `5.【情感真实】愤怒时不说"我很生气"而是摔门而去,紧张时不说"好紧张"而是指甲掐进手心。`,
-          `6.【节奏控制】前20%快速抓人,20-40%升级冲突,40-60%中段大反转,60-80%高潮连环,最后20%情感收束。`,
-          ``,
-          `【剧情连贯性红线】`,
-          `1.所有创作必须100%围绕标题「${series.title}」和简介展开`,
-          `2.每集synopsis必须包含具体角色名和具体事件`,
-          `3.角色决定必须有后果——第3集的谎言第5集必须被揭穿`,
-          `4.配角不是工具人——每个配角至少有自己的故事线`,
-          `5.已发生的重大事件必须在后续被角色记住和提及`,
-          `6.每集核心冲突类型必须不同:发现秘密/被迫选择/信任崩塌/意外重逢/真相大白/背叛与原谅/身份暴露/生死抉择,不可重复`,
-          `7.cliffhanger字段:最后1集写"故事完结",其余集写具体悬念画面`,
-          `8.不同角色说话方式必须有明显差异,体现各自性格身份`,
-          `7. 每集synopsis必须包含具体事件名和角色名，不能只写空泛的"故事发展"`,
-          `8. cliffhanger字段：最后1集写"故事完结"，其余集写具体的伏笔或悬念内容`,
-        ].filter(Boolean).join('\n');
-        // v6.0.78: dead code below — extraRules已合并入主体prompt，但保留变量声明以避免编译错误
-        const extraRules = '\n9. 【严禁重复套路】每集核心冲突类型必须不同——禁止多集出现类似模式，每集必须有独特事件类型(发现秘密/背叛/重逢/抉择/对决等)\n10. 【角色语言个性化】不同角色说话方式必须有明显差异，体现各自性格身份；对话内容不可跨集重复';
-        // v6.0.112: 修复epGenPromptLines中情节反转的Unicode乱码
-        const epGenPromptFixed = epGenPromptLines.replace(/意想不到的.{1,6}节反转/, '意想不到的情节反转'); // v6.0.78: 直接使用（旧extraRules已合并入主体）
-
-        // v6.0.93: 并行执行大纲生成 + 角色生成（互不依赖，节省~60s）
-        // 清除旧角色数据放到并行前（重试安全）
+        const epGenPromptFixed = buildEpisodeOutlinePrompt({ ptLabel, ptNarrative, totalEpisodes, series, creativeSeed });
+        // v6.0.93: parallel episode outlines + characters generation
+        // Clear old character data before parallel execution (retry-safe)
         const { error: delCharErr } = await supabase.from('series_characters').delete().eq('series_id', seriesId);
         if (delCharErr) console.warn('[AI] generate-full-ai: delete old characters warning:', delCharErr.message);
 
@@ -5543,12 +5869,14 @@ app.post(`${PREFIX}/series/:id/generate-full-ai`, async (c) => {
             timeout: 120000,
           }),
           // 角色生成
+          // v6.0.157: 有参考图时启用多模态视觉——seed-2-0-pro直接"看"参考图来设计匹配的角色外貌
           callAI({
-            messages: [{ role: 'user', content: charPromptLinesFixed }],
+            messages: [{ role: 'user', content: charPromptLines }],
             tier: 'medium',
             temperature: 0.8,
             max_tokens: 3000,
             timeout: 60000,
+            ...(referenceImageUrl ? { imageUrls: [referenceImageUrl] } : {}),
           }),
         ]);
         console.log(`[AI] generate-full-ai: Parallel results: ep=${epResult.status}, char=${charResult.status}`);
@@ -5593,6 +5921,7 @@ app.post(`${PREFIX}/series/:id/generate-full-ai`, async (c) => {
         }
 
         // 写入角色到 DB（并行AI完成后同步写）
+        // v6.0.176: 旧角色已在并行前清除，此处直接插入
         const { data: insertedChars, error: charInsertErrInner } = await supabase
           .from('series_characters').insert(characterRows).select();
         if (charInsertErrInner) {
@@ -5612,7 +5941,7 @@ app.post(`${PREFIX}/series/:id/generate-full-ai`, async (c) => {
     // 兜底：如果并行路径完全跳过（无AI key），在这里生成默认角色并写DB
     if (characterRows.length === 0) {
       characterRows = [
-        { series_id: seriesId, name: '主角', role: 'protagonist', description: '故事���主人公，怀揣梦想的年轻人', appearance: '20岁左右，精神饱满，目光坚定', personality: '勇敢、坚韧、善良' },
+        { series_id: seriesId, name: '主角', role: 'protagonist', description: '故事的主人公，怀揣梦想的年轻人', appearance: '20岁左右，精神饱满，目光坚定', personality: '勇敢、坚韧、善良' },
         { series_id: seriesId, name: '挚友', role: 'supporting', description: '主角最信任的伙伴，总在关键时刻伸出援手', appearance: '与主角同龄，性格开朗，笑容爽朗', personality: '忠诚、幽默、热心' },
         { series_id: seriesId, name: '导师', role: 'supporting', description: '引导主角成长的智者，拥有丰富的阅历', appearance: '中年人，气质沉稳，目光深邃', personality: '睿智、严厉、关怀' },
       ];
@@ -5635,45 +5964,19 @@ app.post(`${PREFIX}/series/:id/generate-full-ai`, async (c) => {
           `${ch.name}（${ch.role}）：${ch.appearance || '未描述'}`
         ).join('\n');
 
-        const styleGuidePrompt = `你是一位专业的漫画美术总监。请为以下漫剧创建一份统一的视觉风格指南，确保全系列画面风格一致。
-
-漫剧标题：${series.title}
-故事简介：${series.description || '未提供'}
-${series.genre ? `类型：${series.genre}` : ''}
-视觉风格方向：${baseStylePrompt}
-${referenceImageUrl ? `用户提供了参考图，请参考其视觉风格、色调、构图来制定风格指南。` : ''}
-主要角色：
-${charAppearanceList || '暂无角色信息'}
-
-请按以下格式输出视觉风格指南（纯文本，不要JSON格式）：
-
-【角色外貌卡】
-为每个角色写出60-100字的详细视觉描述，包含：发型发色(刘海方向/长度)、瞳色、面部五官比例(脸型/眉形/鼻形/唇形)、面部微特征(痣/疤痕/酒窝/雀斑的精确位置，如"右嘴角上方1cm有小痣"，没有则写"面部无痣无疤")、体型身高、标志性服装/配饰。确保每次出现该角色时视觉100%一致。
-
-【色彩方案】
-定���全系列��主色调、辅色调、情绪色彩映射（如紧张=冷色、温馨=暖色），30-50字。
-
-【构图与光影规范】
-定义常用构图方式、光影风格、画面质感，30-50字。
-
-【环境风格基准】
-定义场景环境的整体美术风格、建筑风格、自然环境特征，30-50字。
-
-要求：
-1. 所有描述必须与「${seriesStyle}」风格（${baseStylePrompt}）高度统一
-2. 角色外貌描述必须极��具体，能作为AI视频生成的精确参考，包含可量化的视觉锚点
-3. 控制总字数在300-500字以内，言简意赅
-4. 角色形象设计符合当代中国主流审美：五官精致端正、身材比例协调、气质自然得体、衣着有品位感
-5. 【面部微特征锁定】痣/疤痕/胎记/酒窝的位置一旦设定，全系列所有场景必须完全一致——绝不允许左右脸互换或位置漂移
-6. 每个角色至少2个独特的视觉辨识标志(如独特发型/标志性配饰/特殊服装颜色)，确保视频生成时不会��淆不同角色`;
+        // v6.0.177: styleGuidePrompt dead code removed — fully covered by prompt-builders.ts
 
         // v6.0.19: callAI 多模型路由（medium tier — 风格指南）
+        // v6.0.157: 有参考图时启用多模态视觉——seed-2-0-pro分析参考图的色调/构图/光影来制定风格指南
+        // v6.0.159+v6.0.176: 使用prompt-builders模块构建风格指南prompt（旧styleGuidePrompt已清理）
+        const styleGuidePromptV2 = buildStyleGuidePrompt({ series, seriesStyle, baseStylePrompt, charAppearanceList, referenceImageUrl });
         const sgResult = await callAI({
-          messages: [{ role: 'user', content: styleGuidePrompt }],
+          messages: [{ role: 'user', content: styleGuidePromptV2 }],
           tier: 'medium',
           temperature: 0.6,
           max_tokens: 2000,
           timeout: 60000,
+          ...(referenceImageUrl ? { imageUrls: [referenceImageUrl] } : {}),
         });
         visualStyleGuide = sgResult.content.trim();
         console.log(`[AI] generate-full-ai: ✅ Visual style guide generated (${visualStyleGuide.length} chars, model=${sgResult.model})`);
@@ -5737,8 +6040,10 @@ ${charAppearanceList || '暂无角色信息'}
     });
 
     // 使用 upsert 防止重试时唯一约束冲突 (series_id + episode_number)
-    const { data: createdEpisodes, error: epInsertErr } = await supabase
+    // v6.0.149: createdEpisodes declaration hoisted above if-block (was const, now let assignment)
+    const { data: _upsertedEps, error: epInsertErr } = await supabase
       .from('series_episodes').upsert(episodeRows, { onConflict: 'series_id,episode_number' }).select();
+    createdEpisodes = _upsertedEps || undefined;
 
     if (epInsertErr) {
       console.error('[AI] generate-full-ai: Episode insert error:', epInsertErr.message);
@@ -5749,9 +6054,26 @@ ${charAppearanceList || '暂无角色信息'}
       if (failUpErr) await supabase.from('series').update({ status: 'failed' }).eq('id', seriesId);
       return c.json({ success: false, error: `剧集写入失败: ${epInsertErr.message}` }, 500);
     }
+    } // end if (!_continuationMode) — Steps 1-4
+
+    // v6.0.149: In continuation mode, override variables with existing DB data
+    if (_continuationMode) {
+      episodeOutlines = _contEpOutlines;
+      characterRows = _contCharRows;
+      createdChars = _contCreatedChars;
+      createdEpisodes = _contCreatedEpisodes;
+      visualStyleGuide = _contVisualStyleGuide;
+    }
+
+    // v6.0.149: In continuation mode, only generate storyboards for episodes that lack them
+    const sbEpisodeOutlines = (_continuationMode && _contEpFilter)
+      ? episodeOutlines.filter((ep: any) => _contEpFilter!.has(ep.episodeNumber))
+      : episodeOutlines;
 
     // ===== Step 5: 为每集生成基础分镜 =====
-    await updateProgress(5, 6, '正在生成分镜场景...');
+    await updateProgress(5, 6, _continuationMode
+      ? `续接模式：为${sbEpisodeOutlines.length}/${episodeOutlines.length}集生成分镜...`
+      : '正在生成分镜场景...');
     const scenesPerEp = 6;
     // v6.0.90: 改为按批次立即写DB、释放内存，避免大型系列OOM
     let totalSbInserted = 0;
@@ -5772,10 +6094,11 @@ ${charAppearanceList || '暂无角色信息'}
 
     // v5.6.0: 使用AI为每集生成具体的分镜描述，而非硬编码通用模板
     // v6.0.84: 降至每批2集（原3集prompt过大导致AI超时或截断JSON）
+    // v6.0.149: 续接模式下使用 sbEpisodeOutlines（仅缺分镜的集），正常模式下等同 episodeOutlines
     const SB_BATCH_SIZE = 2;
     const epBatches: any[][] = [];
-    for (let bi = 0; bi < episodeOutlines.length; bi += SB_BATCH_SIZE) {
-      epBatches.push(episodeOutlines.slice(bi, bi + SB_BATCH_SIZE));
+    for (let bi = 0; bi < sbEpisodeOutlines.length; bi += SB_BATCH_SIZE) {
+      epBatches.push(sbEpisodeOutlines.slice(bi, bi + SB_BATCH_SIZE));
     }
 
     // v6.0.8: 构建角色外貌卡（用于分镜prompt注入，确保每帧角色外貌一致）
@@ -5786,29 +6109,165 @@ ${charAppearanceList || '暂无角色信息'}
     // v6.0.8: 追踪已生成的批次，用于传递前集摘要上下文
     let previousBatchSummary = '';
 
+    // v6.0.153: In continuation mode, build sorted completed-episode summaries for per-batch gap injection.
+    // v6.0.152 (reverted) seeded ALL completed eps at once — leaked future eps into earlier prompts
+    // (e.g., E4,E5,E6 appeared in E3's previousBatchSummary even though E3 is processed first).
+    // v6.0.153 fix: inject completed ep summaries dynamically before each batch, only for eps with
+    // episodeNumber < current batch's min episode, maintaining correct temporal ordering.
+    // v6.0.156: Two-tier summary structure — `summary` (full, with scene arc+dialogue from v6.0.155)
+    // and `summaryCompact` (synopsis-only, v6.0.153 style). Budget-based degradation at injection
+    // time uses compact for temporally distant eps and full for recent ones.
+    const _contCompletedSummaries: Array<{ epNum: number; summary: string; summaryCompact: string }> = [];
+    const CONT_SUMMARY_BUDGET = 1500; // v6.0.156: max chars for previousBatchSummary after gap injection
+    let _contSummaryInjectedUpTo = 0; // highest completed-ep number already injected
+    if (_continuationMode && _contEpOutlines.length > 0 && _contEpFilter) {
+      for (const ep of _contEpOutlines) {
+        if (!_contEpFilter.has(ep.episodeNumber)) {
+          // Base: synopsis + cliffhanger (compact tier, ~70 chars)
+          let summaryCompact = `第${ep.episodeNumber}集「${ep.title}」：${(ep.synopsis || '').substring(0, 40)}`;
+          if (ep.cliffhanger) summaryCompact += `→悬念：${ep.cliffhanger.substring(0, 30)}`;
+          // Full tier: add scene arc + dialogue (v6.0.155, ~150-185 chars total)
+          let summaryFull = summaryCompact;
+          if (_contExistingSceneData) {
+            const scenes = _contExistingSceneData.get(ep.episodeNumber);
+            if (scenes && scenes.length > 0) {
+              const sorted = [...scenes].sort((a, b) => a.scene_number - b.scene_number);
+              const arcPoints: string[] = [];
+              const first = sorted[0];
+              if (first?.description) arcPoints.push(`开场:${first.description.substring(0, 25)}`);
+              if (sorted.length >= 3) {
+                const mid = sorted[Math.floor(sorted.length / 2)];
+                if (mid?.description) arcPoints.push(`转折:${mid.description.substring(0, 25)}`);
+              }
+              const last = sorted[sorted.length - 1];
+              if (last?.description && last !== first) arcPoints.push(`收尾:${last.description.substring(0, 25)}`);
+              if (arcPoints.length > 0) summaryFull += `[${arcPoints.join('→')}]`;
+              const dlgScene = sorted.slice(Math.floor(sorted.length / 3)).find(s => s.dialogue && s.dialogue.length > 5);
+              if (dlgScene?.dialogue) {
+                const firstLine = dlgScene.dialogue.split(/[\\n\n]/).filter(Boolean)[0] || '';
+                if (firstLine.length > 3) summaryFull += `|「${firstLine.substring(0, 30)}」`;
+              }
+            }
+          }
+          _contCompletedSummaries.push({ epNum: ep.episodeNumber, summary: summaryFull, summaryCompact });
+        }
+      }
+      _contCompletedSummaries.sort((a, b) => a.epNum - b.epNum);
+      if (_contCompletedSummaries.length > 0) {
+        const avgFull = Math.round(_contCompletedSummaries.reduce((s, e) => s + e.summary.length, 0) / _contCompletedSummaries.length);
+        const avgCompact = Math.round(_contCompletedSummaries.reduce((s, e) => s + e.summaryCompact.length, 0) / _contCompletedSummaries.length);
+        console.log(`[AI] generate-full-ai: CONTINUATION prepared ${_contCompletedSummaries.length} completed-ep summaries (${_contCompletedSummaries.map(s => `E${s.epNum}`).join(',')}, avg full=${avgFull} compact=${avgCompact} chars/ep, budget=${CONT_SUMMARY_BUDGET})`);
+      }
+    }
+
     let sbAiFallback = false;
     let sbConsecutiveAiFails = 0; // v6.0.84: 跟踪连续AI失败次数，>=3次才永久放弃
-    // v6.0.86: 生成质量统���
+    // v6.0.86: 生成质量统计
     let statsAiSuccessBatches = 0;
     let statsAiRepairedBatches = 0;
     let statsRetrySuccessBatches = 0;
     let statsFallbackBatches = 0;
+    // v6.0.154: Token usage tracking for continuation mode — quantify optimization effect of v6.0.151-153
+    const _contTokenStats = {
+      totalPromptChars: 0,      // actual prompt chars sent in continuation mode
+      normalEstPromptChars: 0,  // estimated chars if using normal (non-continuation) prompt
+      totalMaxTokens: 0,        // actual max_tokens requested
+      normalEstMaxTokens: 0,    // what normal mode would request (8000 per batch)
+      gapSummariesInjected: 0,  // number of completed-ep summaries injected via v6.0.153
+      scenesSkippedByFilter: 0, // scenes skipped by v6.0.150 DB filter
+      scenesRequestedVsNormal: [0, 0] as [number, number], // [actual, normal] scene counts requested from AI
+    };
     for (let batchIdx = 0; batchIdx < epBatches.length; batchIdx++) {
       const epBatch = epBatches[batchIdx];
       // v6.0.104: 心跳——每批次开始时更新updated_at，防止前端误判为卡住
       // （AI单次调用可达90s，多批次总耗时可超300s；此前心跳仅在首次AI调用前触发一次）
       try { await supabase.from('series').update({ updated_at: new Date().toISOString() }).eq('id', seriesId); } catch { /* non-blocking */ }
-      // v6.0.84: ��次级进度更新（前端可实时显示"分镜 第2/5批"）
-      await updateProgress(5, 6, `正在生成分镜场景 (第${batchIdx + 1}/${epBatches.length}批, 共${episodeOutlines.length}集)...`, {
+      // v6.0.84: 批次级进度更新（前端可实时显示"分镜 第2/5批"）
+      await updateProgress(5, 6, `正在生成分镜场景 (第${batchIdx + 1}/${epBatches.length}批, 共${sbEpisodeOutlines.length}集)...`, {
         storyboardBatch: batchIdx + 1,
         storyboardTotalBatches: epBatches.length,
         scenesGeneratedSoFar: totalSbScenes,
       });
+      // v6.0.153: Inject completed-episode summaries for episodes BEFORE this batch (gap-filling).
+      // Ensures temporal ordering: only inject eps with numbers < current batch's min, not yet injected.
+      // v6.0.156: Budget-based graceful degradation — use full summaries for recent eps, compact for distant ones
+      if (_continuationMode && _contCompletedSummaries.length > 0) {
+        const batchMinEp = Math.min(...epBatch.map((ep: any) => ep.episodeNumber));
+        const toInject = _contCompletedSummaries.filter(s => s.epNum < batchMinEp && s.epNum > _contSummaryInjectedUpTo);
+        if (toInject.length > 0) {
+          // v6.0.156: Build gap summary with budget-aware tier selection
+          // Strategy: start with all full summaries, if over budget progressively downgrade oldest to compact
+          const existingLen = previousBatchSummary ? previousBatchSummary.length + 1 : 0; // +1 for `；` separator
+          const availableBudget = CONT_SUMMARY_BUDGET - existingLen;
+          // Try all-full first
+          let gapParts = toInject.map(s => s.summary);
+          let gapStr = gapParts.join('；');
+          if (gapStr.length > availableBudget && toInject.length > 1) {
+            // Phase 1: Downgrade oldest entries to compact, keeping most recent 2 as full
+            const keepFullCount = Math.min(2, toInject.length);
+            let degradedCount = 0;
+            gapParts = toInject.map((s, i) => {
+              if (i < toInject.length - keepFullCount && s.summary.length > s.summaryCompact.length) {
+                degradedCount++;
+                return s.summaryCompact;
+              }
+              return s.summary;
+            });
+            gapStr = gapParts.join('；');
+            if (degradedCount > 0) {
+              console.log(`[AI] generate-full-ai: CONTINUATION budget degradation: downgraded ${degradedCount}/${toInject.length} gap summaries to compact tier (budget=${availableBudget}, result=${gapStr.length} chars)`);
+            }
+          }
+          // Phase 2: If still over budget, hard-truncate from start (drop oldest entirely)
+          if (gapStr.length > availableBudget && availableBudget > 0) {
+            const parts = gapStr.split('；');
+            while (parts.length > 1 && parts.join('；').length > availableBudget) {
+              parts.shift();
+            }
+            gapStr = parts.join('；');
+          }
+          previousBatchSummary = previousBatchSummary
+            ? `${previousBatchSummary}；${gapStr}`
+            : gapStr;
+          // v6.0.156: Replace count-based trim (old: keep 6) with budget-based trim on full previousBatchSummary
+          if (previousBatchSummary.length > CONT_SUMMARY_BUDGET) {
+            const trimParts = previousBatchSummary.split('；');
+            while (trimParts.length > 1 && trimParts.join('；').length > CONT_SUMMARY_BUDGET) {
+              trimParts.shift();
+            }
+            previousBatchSummary = trimParts.join('；');
+          }
+          _contSummaryInjectedUpTo = Math.max(...toInject.map(s => s.epNum));
+          _contTokenStats.gapSummariesInjected += toInject.length; // v6.0.154
+          console.log(`[AI] generate-full-ai: CONTINUATION injected ${toInject.length} gap summaries (${toInject.map(s => `E${s.epNum}`).join(',')}) before batch ${batchIdx + 1} (E${batchMinEp}+), previousBatchSummary=${previousBatchSummary.length}/${CONT_SUMMARY_BUDGET} chars`);
+        }
+      }
+
       let batchAiSuccess = false; // v6.0.84: 本批次AI是否成功
       // v6.0.90: 每批次使用局部数组，处理完立即写DB并释放内存，防止大型系列OOM
       const batchRows: any[] = [];
       if ((VOLCENGINE_API_KEY || ALIYUN_BAILIAN_API_KEY) && !sbAiFallback) { // v6.0.84: 修复——原仅检查ALIYUN导致仅配VOLCENGINE时跳过AI
         // v6.0.84: 提升prompt构建至try外部，使retry块可访问sbPrompt
+        // v6.0.151: In continuation mode, build per-episode missing scene info + existing scene context
+        let _batchHasMissingScenes = false; // v6.0.151: track if any episode in this batch has partial scenes
+        let _batchMissingInfo: Map<number, { missing: number[]; existing: Array<{ scene_number: number; description: string; dialogue: string; camera_angle: string; emotional_tone: string; location: string }> }> | null = null;
+        if (_continuationMode && _contExistingSceneData && _contExistingScenes) {
+          _batchMissingInfo = new Map();
+          for (const ep of epBatch) {
+            const existingSet = _contExistingScenes.get(ep.episodeNumber);
+            const existingData = _contExistingSceneData.get(ep.episodeNumber) || [];
+            const missing: number[] = [];
+            for (let s = 1; s <= scenesPerEp; s++) {
+              if (!existingSet || !existingSet.has(s)) missing.push(s);
+            }
+            if (missing.length > 0 && missing.length < scenesPerEp && existingData.length > 0) {
+              _batchHasMissingScenes = true;
+              _batchMissingInfo.set(ep.episodeNumber, { missing, existing: existingData });
+            }
+          }
+          if (!_batchHasMissingScenes) _batchMissingInfo = null; // no partial episodes → use normal prompt
+        }
+
         const batchEpInfo = epBatch.map((ep: any) => {
           let epLine = `第${ep.episodeNumber}集「${ep.title}」：${ep.synopsis || '未提供'}`;
           if (ep.cliffhanger) epLine += `（伏笔/悬念：${ep.cliffhanger}）`;
@@ -5819,7 +6278,7 @@ ${charAppearanceList || '暂无角色信息'}
           ? `\n【前集摘要——必须承接以下剧情】\n${previousBatchSummary}\n`
           : '';
 
-        // v6.0.115: 风格指南截断从500→1000字符——500字切断角色��貌卡+色彩方案等关键参数，导致不同批次分镜收到的风格信息不完整→风格不一致
+        // v6.0.115: 风格指南截断从500→1000字符——500字切断角色外貌卡+色彩方案等关键参数，导致不同批次分镜收到的风格信息不完整→风格不一致
         // v6.0.115: 始终注入baseStylePrompt风格DNA，即使有visualStyleGuide也要补充（确保跨批次风格基因一致）
         const styleGuideBlock = visualStyleGuide
           ? `\n【视觉风格指南——所有场景必须遵守】\n${visualStyleGuide.substring(0, 1000)}\n【风格DNA锁定】${baseStylePrompt}\n`
@@ -5828,61 +6287,66 @@ ${charAppearanceList || '暂无角色信息'}
         const cinematographyBlock = getCinematographyBlock(productionType);
         const ptInfo = PRODUCTION_TYPE_PROMPTS[productionType] || PRODUCTION_TYPE_PROMPTS.short_drama;
 
-        // v6.0.78+v6.0.84: 重写分镜prompt——强化衔接连贯性+角色一致性+反套路（提升至try外供retry使用）
-        const sbPrompt = `你是一位${ptInfo.label}级别的专业分镜师兼摄影指导，精通视听语言理论。请为以下作品的每集创作${scenesPerEp}个电影级分镜场景描述。
+        // v6.0.177: sbPrompt dead code removed — fully covered by prompt-builders.ts
+        const sbPromptFixed = buildStoryboardPrompt({
+          productionType, series, scenesPerEp, cinematographyBlock, styleGuideBlock,
+          charAppearanceBlock, contextBlock, batchEpInfo, creativeSeed,
+        });
 
-作品标题：${series.title}
-故事简介：${series.description || '未提供'}
-${series.genre ? `类型：${series.genre}` : ''}
-${series.theme ? `主题：${series.theme}` : ''}
-${cinematographyBlock}
-${styleGuideBlock}
-【角色外貌卡——场景描述中必须使用以下外貌特征】
-${charAppearanceBlock || '角色待定'}
-${contextBlock}
-需要创作分镜的剧集：
-${batchEpInfo}
+        // v6.0.151: Build targeted continuation prompt — include existing scenes as context, only request missing ones
+        let sbPromptFinal = sbPromptFixed;
+        let contExpectedSceneCount = scenesPerEp * epBatch.length; // normal: all scenes
+        if (_batchHasMissingScenes && _batchMissingInfo) {
+          const contBlocks: string[] = [];
+          let totalMissing = 0;
+          for (const ep of epBatch) {
+            const info = _batchMissingInfo.get(ep.episodeNumber);
+            if (info && info.missing.length > 0 && info.missing.length < scenesPerEp) {
+              // Build existing scene summaries (truncated to save tokens)
+              // v6.0.157: Tune truncation — description 60→50 chars, dialogue 40→30 chars (saves ~15% tokens per scene
+              // while retaining sufficient context for AI to maintain narrative coherence)
+              const existingSummary = info.existing
+                .sort((a, b) => a.scene_number - b.scene_number)
+                .map(s => `  场景${s.scene_number}[${s.camera_angle}/${s.emotional_tone}@${s.location || '未指定'}]: ${(s.description || '').substring(0, 50)}${s.dialogue ? ' | 对白:' + (s.dialogue).substring(0, 30) : ''}`)
+                .join('\n');
+              contBlocks.push(`\n【第${ep.episodeNumber}集 续接信息——以下场景已完成，仅需补全缺失场景】\n已完成的场景（只读上下文，不要重新生成）：\n${existingSummary}\n需要补全的缺失场景编号：${info.missing.join(', ')}\n请仅为第${ep.episodeNumber}集生成以上缺失的${info.missing.length}个场景，sceneNumber必须与上述缺失编号一一对应。\n新场景必须与已有场景在叙事、地点、时间线上自然衔接。`);
+              totalMissing += info.missing.length;
+            } else {
+              // Episode has no existing scenes or all scenes missing — normal generation
+              totalMissing += scenesPerEp;
+            }
+          }
+          if (contBlocks.length > 0) {
+            contExpectedSceneCount = totalMissing;
+            // Replace the "每集返回N个场景" instruction
+            sbPromptFinal = sbPromptFixed
+              .replace(new RegExp(`对每集返回${scenesPerEp}个场景`), `按以下续接要求返回场景（部分集只需补全缺失场景）`)
+              .replace(new RegExp(`每集创作${scenesPerEp}个电影`), `按续接要求补全缺失的电影`);
+            sbPromptFinal += contBlocks.join('\n');
+            sbPromptFinal += `\n\n【续接模式总要求】对于有"已完成场景"的集，只返回缺失场景编号对应的JSON（不要返回已完成的场景）。对于没有续接信息的集，正常返回全部${scenesPerEp}个场景。`;
+            console.log(`[AI] generate-full-ai: v6.0.151 continuation prompt — batch ${batchIdx + 1} requesting ${totalMissing} scenes (${contBlocks.length} episodes with partial data)`);
+          }
+        }
 
-请严格按以下JSON格式回复（不要包含markdown标记），对每集返回${scenesPerEp}个场景：
-[{"episodeNumber":1,"scenes":[{"sceneNumber":1,"description":"具体场景描述(50-80字,含角色全名+外貌+连续动作3步+环境+光影)","dialogue":"角色全名：具体对话内容(每场景至少1-3���推动剧情的对话,多人对话用换行分隔,格式如:林小雨：我不会放弃的\\n张明：你确定吗)","characters":["本场景出场角色全名1","角色全名2"],"location":"具体地点(如林小雨家的客厅)","timeOfDay":"早晨/上午/中午/下午/傍晚/夜晚","cameraAngle":"近景/中景/远景/全景/特写/俯拍/仰拍","emotionalTone":"情感基调","transitionFromPrevious":"与上一个场景的镜头衔接方式(第1个场景写开场)","endingVisualState":"本场景结束时的画面状态(20-30字,角色姿态+表情+环境)"}]}]
+        // v6.0.154: Track token usage for continuation vs normal mode comparison
+        const normalSceneCount = scenesPerEp * epBatch.length;
+        _contTokenStats.totalPromptChars += sbPromptFinal.length;
+        _contTokenStats.normalEstPromptChars += sbPromptFixed.length;
+        _contTokenStats.scenesRequestedVsNormal[0] += contExpectedSceneCount;
+        _contTokenStats.scenesRequestedVsNormal[1] += normalSceneCount;
 
-要求：
-1. 每个场景描述必须紧扣该集标题和剧情简介，不要写通用描述
-2. 描述中必须出现具体角色名和外貌特征（参照角色外貌卡），不要用"主角""配角"等泛称
-3. characters字段必须列出本场景所有出场角色的全名，与dialogue中的说话人一致
-4. 【对白必填——核心要求】dialogue字段严禁为空！每个场景至少2-4句角色对话，格式"角色全名：对话内容\\n角色全名：回应"。对话须推动剧情、揭示性格或制造冲突，严禁空泛废话。唯一例外：纯动作追逐场景可写"角色名：(内心)独白"。严禁出现未在characters中列出的角色说话
-5. 6个场景依次为：开场建立→角色互动→情节推进→冲突/转折→高潮时刻→结尾悬念
-6. 描述要具体生动，适合作为AI视频生成的提示词
-7. 所有画面风格必须与【视觉风格指南】一致
-6. 如果有【前集摘要】，第一个场景必须自然衔接前集结尾
-7. 【场景衔接——最重要】相邻场景必须视觉和叙事连贯：
-   a. 同一角色跨场景出场时，服装/发型/配饰描述必须完全一致
-   b. 场景地点不变时，环境细节（天气/光线/陈设）不能突变
-   c. endingVisualState必须与下一场景开头自然衔接——如角色"转身离开教室"则下一场景从"走廊"开始
-   d. ��感基调���化必须渐进，禁止跳跃（如温馨不能直接跳暴怒）
-   e. transitionFromPrevious描述镜头语言：如"镜头跟随角色移动到YY""时间推移淡入""从特写拉远到全景"
-   f. 场景描述的前10个字必须在空间或时间上承接上一场景的endingVisualState
-   g. 每个场景的location字段必须具体（如"林小雨家的客厅"而非"室内"），同一地点在不同场景中使用完全相同的location值
-   h. 每个场景的timeOfDay必须明确且与上一场景合理衔接（同一场景内不可能从白天跳到深夜）
-8. 【画面质量——电影级4要素】description必须含：(a)光线设计(光源方向+色温) (b)构图位置(人物画面位置+前���/背景层次) (c)环境氛围(5感沉浸细节) (d)色彩情绪(主色调与情感映射)。具体如：光线方向（如"窗外暖阳斜照"）、主体动作（如"转身面向镜头"）、环境氛围词（如"宁静的""紧张的"），以确保AI视频生成结果具有电影级画面质感
-9. 【动作描写——视频生成关键】将大动作拆成3-4个连续小步骤（如不写"她跳舞"，写"右脚轻点地面→身体缓缓旋转→裙摆随惯性展开→双臂向两侧舒展"），禁止模糊动作词（如"打斗""奔跑"），必须拆解为具体肢体动作
-10. 【景别编排节奏】每集场景cameraAngle必须有节奏变化：开场远景→中景互动→中近景情感→特写高潮→中景推进→远景收尾，禁止连续3场景相同景别
-11. 【蒙太奇技法】transitionFromPrevious运用专业蒙太奇：对比蒙太奇(贫富/明暗对比)、平行蒙太奇(双线交叉)、隐喻蒙太奇(笼中鸟暗喻束缚)、积累蒙太奇(同类画面叠加)
-12. 【严禁重复——最关键】(a)不同场景的description禁止出现相同或近似的动作/对话/情节，每个场景必须推进新的剧情事件；(b)dialogue字段中同一角色不可在不同场景重复相似语句；(c)同一集内禁止出现相同location+相同动作的场景组合；(d)如果上一场景角色"对话"了，下一场景必须是"行动"而非再次"对话"
-13. 【角色语言个性化】每个角色的对话风格必须与其性格一致且有辨识度——如内向角色说话简短含蓄、外向角色说话热情直白、反派角色语气阴沉或傲慢。dialogue必须标注说话人全名(如"林小雨：我不会放弃的")，严禁出现未被定义的角色突然说话
-14. 【中国审美与价值观】人物形象优美端庄、气质自然不夸张；情节传递正向价值观(勇气/善良/成长/责任)；场景环境精致美��；避免低俗/恐怖/暴力等不适内容`;
-
-        // v6.0.112: 修复sbPrompt中情感基调/前景背景层次的Unicode乱码
-        const sbPromptFixed = sbPrompt
-          .replace(/d\. .{1,6}感基调变化必须渐进/, 'd. 情感基调变化必须渐进')
-          .replace(/人物画面位置\+前.{1,6}\/背景层次/, '人物画面位置+前景/背景层次');
         try {
           // v6.0.84: timeout 45s→90s, max_tokens 6000→8000（2集×6场景结构化JSON需更多token+时间）
+          // v6.0.151: In continuation mode with partial episodes, reduce max_tokens proportionally
+          // v6.0.157: Lower max_tokens floor 4000→3500 — continuation batches with 1-2 missing scenes need fewer tokens
+          const contTokenReduction = (contExpectedSceneCount < scenesPerEp * epBatch.length) ? Math.max(3500, Math.round(8000 * contExpectedSceneCount / (scenesPerEp * epBatch.length))) : 8000;
+          _contTokenStats.totalMaxTokens += contTokenReduction; // v6.0.154
+          _contTokenStats.normalEstMaxTokens += 8000; // v6.0.154
           const sbAiResult = await callAI({
-            messages: [{ role: 'user', content: sbPromptFixed }],
+            messages: [{ role: 'user', content: sbPromptFinal }],
             tier: 'heavy',
             temperature: 0.75,
-            max_tokens: 8000,
+            max_tokens: contTokenReduction,
             timeout: 90000,
           });
           {
@@ -5932,13 +6396,13 @@ ${batchEpInfo}
             console.log(`[AI] generate-full-ai: Batch ${batchIdx} AI failed (attempt ${sbConsecutiveAiFails}), retrying with lower temperature...`);
             try {
               await new Promise(r => setTimeout(r, 2000)); // 短暂等待
-              // v6.0.104: ���试前心跳——retry AI call也可达90s
+              // v6.0.104: 重试前心跳——retry AI call也可达90s
               try { await supabase.from('series').update({ updated_at: new Date().toISOString() }).eq('id', seriesId); } catch { /* non-blocking */ }
               const retryResult = await callAI({
-                messages: [{ role: 'user', content: sbPromptFixed }], // v6.0.115: 修复——原使用sbPrompt(含Unicode乱码)而非sbPromptFixed
+                messages: [{ role: 'user', content: sbPromptFinal }], // v6.0.151: use sbPromptFinal (includes continuation context if applicable); v6.0.115: 修复——原使用sbPrompt(含Unicode乱码)
                 tier: 'heavy',
                 temperature: 0.5, // 降低temperature提高稳定性
-                max_tokens: 8000,
+                max_tokens: contTokenReduction, // v6.0.151: match first attempt token limit
                 timeout: 90000,
               });
               const retryContent = retryResult.content;
@@ -5975,14 +6439,14 @@ ${batchEpInfo}
         }
       }
 
-      // v6.0.87: Fallback——只要AI+retry都���败就立即生成fallback分镜（不再等3次连续失败）
+      // v6.0.87: Fallback——只要AI+retry都失败就立即生成fallback分镜（不再等3次连续失败）
       // 旧逻辑: sbAiFallback需>=3次连续失败才触发，导致前1-2批零分镜（短剧致命bug）
       if (!batchAiSuccess) {
         statsFallbackBatches++; // v6.0.86
         for (const ep of epBatch) {
           const alreadyGen = batchRows.some((row: any) => row.episode_number === ep.episodeNumber);
           if (alreadyGen) continue;
-          const syn = ep.synopsis || ep.title || '���事展开';
+          const syn = ep.synopsis || ep.title || '故事展开';
           // v6.0.112: 修复syn回退值中的Unicode乱码（故事展开）
           const synFixed = (ep.synopsis || ep.title) || '故事展开';
           const hero = characterRows[0]?.name || '主角';
@@ -6006,7 +6470,7 @@ ${batchEpInfo}
         }
       }
 
-      // v6.0.8: 更新前集摘要——将当前批次的剧��概要追加，供下一批使用
+      // v6.0.8: 更新前集摘要——将当前批次的剧集概要追加，供下一批使用
       const batchSummary = epBatch.map((ep: any) => {
         let summary = `第${ep.episodeNumber}集「${ep.title}」：${(ep.synopsis || '').substring(0, 40)}`;
         if (ep.cliffhanger) summary += `→悬念：${ep.cliffhanger.substring(0, 30)}`;
@@ -6042,13 +6506,13 @@ ${batchEpInfo}
               const sceneSummaries = scenesToEnhance.map((s: any, i: number) =>
                 `场景${i + 1}[EP${s.episode_number}S${s.scene_number}]: ${(s.description || '').substring(0, 60)} | 情感:${s.emotional_tone || '自然'}`
               ).join('\n');
-              const dialoguePrompt = `你是一位专业编剧。请为以下${scenesToEnhance.length}个场景各生成2-3句简短对话（每句不超过20字）。\n角色：${dlgCharNames}\n作品标题：${series.title}\n\n${sceneSummaries}\n\n要求：\n- 对话必须符合场景描述和情感基调\n- 每个场景的对话用"角色名：对话内容"格式，多句用换行分隔\n- 对话要自然、口语化，有情感张力\n- 返回JSON数组，每项格式：{"index":场景序号(从1开始), "dialogue":"对话��容"}\n\n只返回JSON数组，不要其他内容。`;
+              const dialoguePrompt = `你是一位专业编剧。请为以下${scenesToEnhance.length}个场景各生成2-3句简短对话（每句不超过20字）。\n角色：${dlgCharNames}\n作品标题：${series.title}\n\n${sceneSummaries}\n\n要求：\n- 对话必须符合场景描述和情感基调\n- 每个场景的对话用"角色名：对话内容"格式，多句用换行分隔\n- 对话要自然、口语化，有情感张力\n- 返回JSON数组，每项格式：{"index":场景序号(从1开始), "dialogue":"对话内容"}\n\n只返回JSON数组，不要其他内容。`;
               try {
                 // v6.0.104: 对话润色前心跳
                 try { await supabase.from('series').update({ updated_at: new Date().toISOString() }).eq('id', seriesId); } catch { /* non-blocking */ }
                 const dialogueResult = await callAI({
                   messages: [
-                    { role: 'system', content: '你是专业影视编��，擅长写自然、有感情的角色对话。只返回JSON。' },
+                    { role: 'system', content: '你是专业影视编剧，擅长写自然、有感情的角色对话。只返回JSON。' },
                     { role: 'user', content: dialoguePrompt },
                   ],
                   tier: 'light',
@@ -6079,37 +6543,105 @@ ${batchEpInfo}
           }
         }
 
+        // v6.0.150: In continuation mode, filter out scenes that already exist in DB
+        // This avoids overwriting good scenes from a previous partial batch write
+        let rowsToWrite = batchRows;
+        if (_continuationMode && _contExistingScenes) {
+          const beforeCount = rowsToWrite.length;
+          rowsToWrite = batchRows.filter((row: any) => {
+            const existingScenes = _contExistingScenes!.get(row.episode_number);
+            return !existingScenes || !existingScenes.has(row.scene_number);
+          });
+          const skipped = beforeCount - rowsToWrite.length;
+          if (skipped > 0) {
+            _contTokenStats.scenesSkippedByFilter += skipped; // v6.0.154
+            console.log(`[AI] generate-full-ai: Batch ${batchIdx + 1} scene-level skip: ${skipped}/${beforeCount} scenes already exist in DB, writing ${rowsToWrite.length} new scenes`);
+          }
+        }
+
+        // v6.0.160: Protect scenes that already have video_url — NEVER overwrite completed video scenes
+        // This prevents video loss when generate-full-ai re-runs (crash recovery, user retry, etc.)
+        // Applies regardless of continuation mode — even fresh re-runs must preserve existing videos
+        if (rowsToWrite.length > 0) {
+          const epNums = [...new Set(rowsToWrite.map((r: any) => r.episode_number))];
+          const { data: existingWithVideo } = await supabase.from('series_storyboards')
+            .select('episode_number, scene_number, video_url, status')
+            .eq('series_id', seriesId)
+            .in('episode_number', epNums)
+            .not('video_url', 'is', null);
+          if (existingWithVideo && existingWithVideo.length > 0) {
+            const videoSceneKeys = new Set(
+              existingWithVideo
+                .filter((s: any) => s.video_url && s.video_url.startsWith('http'))
+                .map((s: any) => `${s.episode_number}:${s.scene_number}`)
+            );
+            if (videoSceneKeys.size > 0) {
+              const beforeCount = rowsToWrite.length;
+              rowsToWrite = rowsToWrite.filter((row: any) => !videoSceneKeys.has(`${row.episode_number}:${row.scene_number}`));
+              const protectedCount = beforeCount - rowsToWrite.length;
+              if (protectedCount > 0) {
+                console.log(`[AI] generate-full-ai: Batch ${batchIdx + 1} ⚠️ PROTECTED ${protectedCount} scenes with existing videos from overwrite (${[...videoSceneKeys].slice(0, 5).join(', ')}${videoSceneKeys.size > 5 ? '...' : ''})`);
+              }
+            }
+          }
+        }
+
         // 立即写入DB并释放当前批次内存
-        for (let i = 0; i < batchRows.length; i += 50) {
-          const chunk = batchRows.slice(i, i + 50);
+        for (let i = 0; i < rowsToWrite.length; i += 50) {
+          const chunk = rowsToWrite.slice(i, i + 50);
           const { data: ins, error: sbErr } = await supabase.from('series_storyboards').upsert(chunk, { onConflict: 'series_id,episode_number,scene_number' }).select();
           if (sbErr) console.warn(`[AI] generate-full-ai: Batch ${batchIdx + 1} storyboard write error:`, sbErr.message);
           else totalSbInserted += ins?.length || 0;
         }
-        totalSbScenes += batchRows.length;
-        console.log(`[AI] generate-full-ai: Batch ${batchIdx + 1} wrote ${batchRows.length} rows (total inserted=${totalSbInserted})`);
+        totalSbScenes += rowsToWrite.length;
+        console.log(`[AI] generate-full-ai: Batch ${batchIdx + 1} wrote ${rowsToWrite.length} rows (total inserted=${totalSbInserted})`);
       }
     }
 
-    // v6.0.118: 参考图→首帧注入——将referenceImageUrl预设为E1S1的image_url
-    // 效果: E1S2+生成视频时，prev-scene查询直接命中E1S1.image_url（无需走style anchor回退路径）
-    // 形成完整的i2v链: referenceImageUrl→E1S1→E1S2→...→E{n}S{m}，风格从首帧逐场景传递
-    // 当E1S1视频生成完成后，volcengine/status回调会自动用真实thumbnail覆盖此预设值
-    if (referenceImageUrl && totalSbInserted > 0) {
-      try {
-        await supabase.from('series_storyboards')
-          .update({ image_url: referenceImageUrl, updated_at: new Date().toISOString() })
-          .eq('series_id', seriesId)
-          .eq('episode_number', 1)
-          .eq('scene_number', 1);
-        console.log(`[AI] generate-full-ai: 🖼️ Reference image pre-set as E1S1 image_url → bootstraps i2v chain for all subsequent scenes`);
-      } catch (e: any) {
-        console.warn(`[AI] generate-full-ai: E1S1 image_url pre-set failed (non-blocking):`, e?.message);
-      }
+    // v6.0.154: Log continuation mode token usage summary
+    if (_continuationMode && _contTokenStats.totalPromptChars > 0) {
+      const promptSavingPct = _contTokenStats.normalEstPromptChars > 0
+        ? Math.round((1 - _contTokenStats.totalPromptChars / _contTokenStats.normalEstPromptChars) * 100)
+        : 0;
+      const maxTokenSavingPct = _contTokenStats.normalEstMaxTokens > 0
+        ? Math.round((1 - _contTokenStats.totalMaxTokens / _contTokenStats.normalEstMaxTokens) * 100)
+        : 0;
+      const [actualScenes, normalScenes] = _contTokenStats.scenesRequestedVsNormal;
+      console.log(`[AI] generate-full-ai: ===== CONTINUATION TOKEN USAGE SUMMARY (v6.0.151-154) =====`);
+      console.log(`[AI]   Prompt chars: ${_contTokenStats.totalPromptChars} actual vs ${_contTokenStats.normalEstPromptChars} normal (${promptSavingPct > 0 ? '+' : ''}${-promptSavingPct}% — continuation prompts include existing scene context so may be larger)`);
+      console.log(`[AI]   max_tokens: ${_contTokenStats.totalMaxTokens} actual vs ${_contTokenStats.normalEstMaxTokens} normal (${maxTokenSavingPct}% saving)`);
+      console.log(`[AI]   Scenes requested: ${actualScenes} actual vs ${normalScenes} normal (${normalScenes > 0 ? Math.round((1 - actualScenes / normalScenes) * 100) : 0}% reduction)`);
+      console.log(`[AI]   Gap summaries injected (v6.0.153): ${_contTokenStats.gapSummariesInjected} completed-ep summaries`);
+      console.log(`[AI]   Scenes skipped by DB filter (v6.0.150): ${_contTokenStats.scenesSkippedByFilter}`);
+      console.log(`[AI] ============================================================`);
+    }
+
+    // v6.0.147: 数据安全检查点——所有分镜批次已写入DB
+    // 不改status(保持'generating')——因为前端轮询在status!='generating'时停止，
+    // 如果此处写'draft'，SeriesCreationPanel永远看不到'completed'→自动视频生成不触发
+    // 改为: 仅标记_allBatchesWritten+更新generation_progress/updated_at(防stale误判)
+    // 真正的状态降级由三层兜底处理:
+    //   1. beforeunload: Edge Function被kill时，_allBatchesWritten?'draft':'failed'
+    //   2. catch: 收尾操作异常时，_allBatchesWritten?主动写'draft'而非'failed'
+    //   3. 前端isGenerationEffectivelyComplete(): 轮询检测全部分镜已完成→自动修正为draft
+    _allBatchesWritten = true;
+    try {
+      await supabase.from('series').update({
+        updated_at: new Date().toISOString(),
+        generation_progress: { currentStep: 5, totalSteps: 6, stepName: '分镜已写入，正在完成收尾...', totalScenes: totalSbScenes, totalInserted: totalSbInserted },
+      }).eq('id', seriesId);
+      console.log(`[AI] generate-full-ai: ✅ Batch checkpoint — _allBatchesWritten=true (${totalSbInserted}/${totalSbScenes} storyboards safe in DB). Remaining steps are best-effort.`);
+    } catch (earlyErr: any) {
+      console.warn('[AI] generate-full-ai: batch checkpoint progress update exception:', earlyErr?.message);
     }
 
     // ===== Step 6: 完成 =====
-    // v6.0.86: 汇总生成质量统计
+    // v6.0.147: 重排操作顺序——先写'completed'再做参考图注入(best-effort)
+    // 原因: 减少"检查点→completed写入"之间的时间窗口，降低Edge Function超时风险
+    // 原顺序: 检查点→参考图注入(await DB)→质量统计(JS)→completed
+    // 新顺序: 检查点→质量统计(JS,即时)→completed→参考图注入(best-effort)
+
+    // v6.0.86: 汇总生成质量统计（纯JS计算，不耗时）
     const genStats = {
       totalBatches: epBatches.length,
       aiSuccessBatches: statsAiSuccessBatches,
@@ -6123,7 +6655,7 @@ ${batchEpInfo}
     };
     console.log(`[AI] generate-full-ai: 📊 Quality stats: ${JSON.stringify(genStats)}`);
 
-    // �� 关键修复：生成完成后设为 completed，而非 in-progress
+    // ✅ 关键修复：生成完成后设为 completed，而非 in-progress
     // 前端 useSeries 和 SeriesCreationPanel 依赖 completed 状态来触发视频生成
     const { error: completeErr } = await supabase.from('series').update({
       status: 'completed',
@@ -6148,6 +6680,28 @@ ${batchEpInfo}
       }).eq('id', seriesId);
     }
 
+    // v6.0.142: 正常完成——禁用 beforeunload 清理
+    _generationCompleted = true;
+    globalThis.removeEventListener('beforeunload', _cleanupHandler);
+
+    // v6.0.118: 参考图→首帧注入——将referenceImageUrl预设为E1S1的image_url
+    // v6.0.147: 移至completed写入之后——即使此步骤因超时被kill，status已经是'completed'
+    // 效果: E1S2+生成视频时，prev-scene查询直接命中E1S1.image_url（无需走style anchor回退路径）
+    // 形成完整的i2v链: referenceImageUrl→E1S1→E1S2→...→E{n}S{m}，风格从首帧逐场景传递
+    // 当E1S1视频生成完成后，volcengine/status回调会自动用真实thumbnail覆盖此预设值
+    if (referenceImageUrl && totalSbInserted > 0) {
+      try {
+        await supabase.from('series_storyboards')
+          .update({ image_url: referenceImageUrl, updated_at: new Date().toISOString() })
+          .eq('series_id', seriesId)
+          .eq('episode_number', 1)
+          .eq('scene_number', 1);
+        console.log(`[AI] generate-full-ai: 🖼️ Reference image pre-set as E1S1 image_url → bootstraps i2v chain for all subsequent scenes`);
+      } catch (e: any) {
+        console.warn(`[AI] generate-full-ai: E1S1 image_url pre-set failed (non-blocking):`, e?.message);
+      }
+    }
+
     // v6.0.91: 修复——旧变量名 dialogueAiEnhanced/dialogueFillStats 在v6.0.90重命名后未更新，导致ReferenceError
     // ReferenceError在catch块中将status='completed'覆写为status='failed'（所有成功生成均变为失败）
     console.log(`[AI] generate-full-ai: ✅ Done! ${createdChars?.length || 0} chars, ${createdEpisodes?.length || 0} eps, ${totalSbInserted} sbs (AI:${statsAiSuccessBatches} repair:${statsAiRepairedBatches} retry:${statsRetrySuccessBatches} fb:${statsFallbackBatches}) dlg:${accumDialogueAiEnhanced}ai/${accumDialogueFillStats.filledCount}tpl/${accumDialogueFillStats.totalEmpty}empty`);
@@ -6164,16 +6718,31 @@ ${batchEpInfo}
       fallback: !ALIYUN_BAILIAN_API_KEY,
     });
   } catch (error: any) {
+    // v6.0.142: catch 也标记完成+移除监听器，防止 beforeunload 重复写
+    _generationCompleted = true;
+    try { if (_cleanupHandler) globalThis.removeEventListener('beforeunload', _cleanupHandler); } catch { /* ignore */ }
     console.error('[AI] generate-full-ai error:', truncateErrorMsg(error));
     try {
-      // 尝试写入失败详情
-      const { error: failErr } = await supabase.from('series').update({
-        status: 'failed',
-        generation_progress: { currentStep: 0, totalSteps: 6, stepName: '生成异常', error: truncateErrorMsg(error), failedAt: new Date().toISOString() },
-      }).eq('id', c.req.param('id'));
-      // 降级：只设 status=failed
-      if (failErr) {
-        await supabase.from('series').update({ status: 'failed' }).eq('id', c.req.param('id'));
+      // v6.0.147: 如果所有分镜批次已成功写入DB，异常发生在后续收尾操作（参考图/质量统计）
+      // 此时数据已安全，不应标记'failed'——写'draft'让用户可正常使用
+      // 注意：此时status仍为'generating'(检查点未改status)，所以必须主动写'draft'
+      if (_allBatchesWritten) {
+        console.log(`[AI] generate-full-ai: Error occurred AFTER all batches written — writing status='draft' (data is safe). Error: ${truncateErrorMsg(error)}`);
+        await supabase.from('series').update({
+          status: 'draft',
+          generation_progress: { currentStep: 6, totalSteps: 6, stepName: '生成完成(收尾异常)', completedAt: new Date().toISOString(), warning: truncateErrorMsg(error) },
+          updated_at: new Date().toISOString(),
+        }).eq('id', c.req.param('id'));
+      } else {
+        // 尝试写入失败详情
+        const { error: failErr } = await supabase.from('series').update({
+          status: 'failed',
+          generation_progress: { currentStep: 0, totalSteps: 6, stepName: '生成异常', error: truncateErrorMsg(error), failedAt: new Date().toISOString() },
+        }).eq('id', c.req.param('id'));
+        // 降级：只设 status=failed
+        if (failErr) {
+          await supabase.from('series').update({ status: 'failed' }).eq('id', c.req.param('id'));
+        }
       }
     } catch (statusErr: any) {
       console.warn('[AI] generate-full-ai: failed to write failure status to DB:', statusErr?.message);
@@ -6186,9 +6755,9 @@ ${batchEpInfo}
 //  [L] AI 路由 — 剧集大纲 / 故事增强 / 图片生成 / prompt润色
 // ------------------------------------------------------------------
 
-// ==================== AI 路由 ====================
+// ==================== [O] AI 路由 ====================
 
-// AI生成剧集大纲（被 aiEpisodeGenerator.ts 后台调用）
+// AI生成剧集大纲（从 aiEpisodeGenerator.ts 后台调用）
 app.post(`${PREFIX}/ai/generate-episodes`, async (c) => {
   try {
     const body = await c.req.json();
@@ -6219,7 +6788,7 @@ app.post(`${PREFIX}/ai/generate-episodes`, async (c) => {
 
 漫剧标题：${seriesTitle}
 剧集简介：${seriesDescription}
-${genre ? `��型：${genre}` : ''}
+${genre ? `类型：${genre}` : ''}
 ${theme ? `主题：${theme}` : ''}
 ${targetAudience ? `目标受众：${targetAudience}` : ''}
 
@@ -6228,11 +6797,11 @@ ${targetAudience ? `目标受众：${targetAudience}` : ''}
 - 角色名、职业、背景必须与用户提供的标题/简介/类型保持一致
 - 每一集的剧情都必须是用户给定主题的自然延伸
 
-请严格按以��JSON格式回复（不要包含markdown标记），返回一个数组：
+请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：
 [{"episodeNumber":1,"title":"集标题","synopsis":"50-80字的集内容简介","growthTheme":"本集的成长主题","keyMoments":["关键场景1","关键场景2"]}]
 
 要求：
-1. 每集标题简洁有��，必须与漫剧主题相关
+1. 每集标题简洁有力，必须与漫剧主题相关
 2. 故事线有递进和转折，前期建立世界观，中期发展冲突，后期走向高潮和结局
 3. 所有角色、事件、场景必须紧扣用户给定的标题「${seriesTitle}」
 4. 如果用户提供了具体简介，每集剧情必须是该简介故事的具体展开`;
@@ -6286,7 +6855,7 @@ app.post(`${PREFIX}/ai/generate-story-enhanced`, async (c) => {
       const fallback: Record<string, string[]> = {
         anime: ['在樱花飘落的校园里，一位拥有神秘力量的少女遇见了来自异世界的守护者，一场关于命运与友情的冒险即将开始。', '魔法学院新学期开学，转学生小雨发现自己的室友竟然是传说中的天才魔法师。'],
         comic: ['超级英雄白天是普通上班族张明，夜晚化身守护城市的暗影侠客，在两种身份间艰难平衡。', '侦探林雪拥有读心术却遇到第一个读不懂的人，这背后隐藏着惊天秘密。'],
-        cyberpunk: ['2077年霓虹都市中，黑客少女���芯发现了巨型公司隐藏的黑暗真相，她必须在24小时内逃离追捕。'],
+        cyberpunk: ['2077年霓虹都市中，黑客少女晨芯发现了巨型公司隐藏的黑暗真相，她必须在24小时内逃离追捕。'],
         fantasy: ['古老魔法森林深处，年轻精灵阿尔发现了失落已久的龙之石，一场史诗般的冒险即将开始。'],
         realistic: ['退役运动员重返训练场，为了最后一次证明自己，他克服伤痛和质疑，向梦想发起冲击。'],
       };
@@ -6294,7 +6863,7 @@ app.post(`${PREFIX}/ai/generate-story-enhanced`, async (c) => {
       return c.json({ success: true, story: stories[Math.floor(Math.random() * stories.length)], isFallback: true });
     }
     const { existingText, style, duration } = body;
-    const prompt = `你是一位专业的漫画编剧。请创作一段${style || '动漫'}风格的短剧故���。
+    const prompt = `你是一位专业的漫画编剧。请创作一段${style || '动漫'}风格的短剧故事。
 
 ${existingText ? `用户创意参考：${existingText}\n请基于用户提供的创意深入展开，保持原有世界观和角色设定。` : '请自由创作一个新颖独特的故事，避免俗套的快递员、穿越时空等常见桥段。'}
 
@@ -6331,7 +6900,7 @@ app.post(`${PREFIX}/ai/text-to-image`, async (c) => {
     if (!resp.ok) return c.json({ success: false, message: `图片生成失败: ${resp.status}` }, resp.status);
     const result = await resp.json();
     const imageUrl = result.data?.[0]?.url || '';
-    if (!imageUrl) return c.json({ success: false, message: '未获��到图片' }, 500);
+    if (!imageUrl) return c.json({ success: false, message: '未获取到图片' }, 500);
     return c.json({ success: true, imageUrl });
   } catch (error: any) { console.error('[POST /ai/text-to-image] Error:', error); return c.json({ success: false, message: error.message }, 500); }
 });
@@ -6381,7 +6950,7 @@ app.post(`${PREFIX}/ai/polish-image-prompt`, async (c) => {
   } catch (error: any) { console.error('[POST /ai/polish-image-prompt] Error:', error); return c.json({ success: false, message: error.message }, 500); }
 });
 
-// ==================== 社区漫剧系列列表 ====================
+// ==================== [P] 社区漫剧系列列表 ====================
 
 app.get(`${PREFIX}/community/series`, async (c) => {
   // v6.0.8-refactor: batch query optimization — 6 fixed queries instead of N*6
@@ -6443,103 +7012,96 @@ app.get(`${PREFIX}/community/series`, async (c) => {
     }
 
     // v6.0.8-refactor: batch query optimization (6 fixed queries instead of N*6)
+    // v6.0.175: Phase-parallel — all independent queries run concurrently (was sequential waterfall)
     const seriesIds = seriesList.map((s: any) => s.id);
     const uniqueUserPhones = [...new Set(seriesList.map((s: any) => s.user_phone).filter(Boolean))] as string[];
+    const needCoverIds = seriesList.filter((s: any) => !s.cover_image_url).map((s: any) => s.id);
 
-    // 1. 批量获取所有系列的剧集
-    const { data: allEpisodesBatch, error: batchEpErr } = await supabase
-      .from('series_episodes')
-      .select('series_id, id, episode_number, title, synopsis, status, total_duration, thumbnail_url, merged_video_url')
-      .in('series_id', seriesIds)
-      .order('episode_number', { ascending: true });
-    if (batchEpErr) console.warn('[Community] Batch episodes query error:', truncateErrorMsg(batchEpErr));
+    // ── Phase 2: ALL independent queries in parallel ──
+    const phase2Promises: Promise<any>[] = [
+      // [0] 批量剧集
+      supabase.from('series_episodes')
+        .select('series_id, id, episode_number, title, synopsis, status, total_duration, thumbnail_url, merged_video_url')
+        .in('series_id', seriesIds).order('episode_number', { ascending: true }),
+      // [1] 封面回退: storyboard images
+      needCoverIds.length > 0
+        ? supabase.from('series_storyboards').select('series_id, image_url')
+            .in('series_id', needCoverIds).not('image_url', 'is', null)
+            .order('episode_number', { ascending: true }).order('scene_number', { ascending: true })
+        : Promise.resolve({ data: [] }),
+      // [2] likes counts (head:true — no row transfer)
+      Promise.all(seriesIds.map((id: string) =>
+        supabase.from('likes').select('*', { count: 'exact', head: true }).eq('work_id', id)
+      )),
+      // [3] comments counts
+      Promise.all(seriesIds.map((id: string) =>
+        supabase.from('comments').select('*', { count: 'exact', head: true }).eq('work_id', id)
+      )),
+      // [4] user likes status
+      userPhone
+        ? supabase.from('likes').select('work_id').in('work_id', seriesIds).eq('user_phone', userPhone)
+        : Promise.resolve({ data: [] }),
+      // [5] viewing history
+      userPhone
+        ? supabase.from('viewing_history').select('series_id, last_episode, progress').in('series_id', seriesIds).eq('user_phone', userPhone)
+        : Promise.resolve({ data: [] }),
+      // [6] user nicknames
+      uniqueUserPhones.length > 0
+        ? supabase.from('users').select('phone, nickname').in('phone', uniqueUserPhones)
+        : Promise.resolve({ data: [] }),
+    ];
+    const [episodesRes, sbImagesRes, likeCountResults, commentCountResults, userLikesRes, viewHistoryRes, usersRes] = await Promise.all(phase2Promises);
+
+    // Build episodes map
+    if (episodesRes.error) console.warn('[Community] Batch episodes query error:', truncateErrorMsg(episodesRes.error));
     const episodesMap = new Map<string, any[]>();
-    for (const ep of (allEpisodesBatch || [])) {
+    for (const ep of (episodesRes.data || [])) {
       const list = episodesMap.get(ep.series_id) || [];
       list.push(ep);
       episodesMap.set(ep.series_id, list);
     }
 
-    // v6.0.37: 批量获取封面回退——分镜image_url/thumbnail_url → video_tasks缩略图
+    // Build cover fallback map from storyboard images
     const coverFallbackMap = new Map<string, string>();
-    const seriesNeedingCover = seriesList.filter((s: any) => !s.cover_image_url);
-    if (seriesNeedingCover.length > 0) {
-      const needCoverIds = seriesNeedingCover.map((s: any) => s.id);
-      // Step 1: storyboards 的 image_url
-      const { data: sbImages } = await supabase
-        .from('series_storyboards')
-        .select('series_id, image_url')
-        .in('series_id', needCoverIds)
-        .not('image_url', 'is', null)
-        .order('episode_number', { ascending: true })
-        .order('scene_number', { ascending: true });
-      for (const sb of (sbImages || [])) {
-        const imgUrl = sb.image_url;
-        if (imgUrl && !coverFallbackMap.has(sb.series_id)) {
-          coverFallbackMap.set(sb.series_id, imgUrl);
-        }
+    for (const sb of (sbImagesRes.data || [])) {
+      if (sb.image_url && !coverFallbackMap.has(sb.series_id)) {
+        coverFallbackMap.set(sb.series_id, sb.image_url);
       }
-      // Step 2: video_tasks 缩略图（最可靠的来源——volcengine自动生成）
-      const stillNeedCover = needCoverIds.filter((id: string) => !coverFallbackMap.has(id));
-      if (stillNeedCover.length > 0) {
-        const { data: taskThumbs } = await supabase
-          .from('video_tasks')
-          .select('generation_metadata, thumbnail')
-          .eq('status', 'completed')
-          .not('thumbnail', 'is', null)
-          .filter('generation_metadata->>type', 'eq', 'storyboard_video')
-          .order('created_at', { ascending: true })
-          .limit(200);
-        for (const t of (taskThumbs || [])) {
-          const sid = t.generation_metadata?.seriesId;
-          if (sid && stillNeedCover.includes(sid) && t.thumbnail && !coverFallbackMap.has(sid)) {
-            coverFallbackMap.set(sid, t.thumbnail);
-          }
+    }
+    // Phase 3 (conditional): video_tasks thumbnails for series still missing covers
+    const stillNeedCover = needCoverIds.filter((id: string) => !coverFallbackMap.has(id));
+    if (stillNeedCover.length > 0) {
+      const { data: taskThumbs } = await supabase
+        .from('video_tasks')
+        .select('generation_metadata, thumbnail')
+        .eq('status', 'completed')
+        .not('thumbnail', 'is', null)
+        .filter('generation_metadata->>type', 'eq', 'storyboard_video')
+        .order('created_at', { ascending: true })
+        .limit(200);
+      for (const t of (taskThumbs || [])) {
+        const sid = t.generation_metadata?.seriesId;
+        if (sid && stillNeedCover.includes(sid) && t.thumbnail && !coverFallbackMap.has(sid)) {
+          coverFallbackMap.set(sid, t.thumbnail);
         }
       }
     }
 
-    // 2-3. 批量获取每个系列的点赞数和评论数（head:true count聚合，不传输行数据）
-    // v6.0.29: 替代原先fetch-all-rows-then-count-in-JS方案，消除热门系列数千行likes/comments的网络传输
+    // Build likes/comments count maps
     const likesCountMap = new Map<string, number>();
     const commentsCountMap = new Map<string, number>();
-    const [likeCountResults, commentCountResults] = await Promise.all([
-      Promise.all(seriesIds.map((id: string) =>
-        supabase.from('likes').select('*', { count: 'exact', head: true }).eq('work_id', id)
-      )),
-      Promise.all(seriesIds.map((id: string) =>
-        supabase.from('comments').select('*', { count: 'exact', head: true }).eq('work_id', id)
-      )),
-    ]);
     seriesIds.forEach((id: string, i: number) => {
       likesCountMap.set(id, likeCountResults[i].count || 0);
       commentsCountMap.set(id, commentCountResults[i].count || 0);
     });
 
-    // 4. 批量获取当前用户的点赞状态
+    // Build user interaction maps
     const userLikesSet = new Set<string>();
-    if (userPhone) {
-      const { data: userLikesData } = await supabase
-        .from('likes').select('work_id').in('work_id', seriesIds).eq('user_phone', userPhone);
-      for (const like of (userLikesData || [])) userLikesSet.add(like.work_id);
-    }
-
-    // 5. 批量获取当前用户的续看进度
+    for (const like of (userLikesRes.data || [])) userLikesSet.add(like.work_id);
     const viewHistoryMap = new Map<string, any>();
-    if (userPhone) {
-      // v6.0.24: 仅需续看进度字段
-      const { data: viewHistories } = await supabase
-        .from('viewing_history').select('series_id, last_episode, progress').in('series_id', seriesIds).eq('user_phone', userPhone);
-      for (const vh of (viewHistories || [])) viewHistoryMap.set(vh.series_id, vh);
-    }
-
-    // 6. 批量获取创建用户昵称
+    for (const vh of (viewHistoryRes.data || [])) viewHistoryMap.set(vh.series_id, vh);
     const userNicknameMap = new Map<string, string>();
-    if (uniqueUserPhones.length > 0) {
-      const { data: usersData } = await supabase
-        .from('users').select('phone, nickname').in('phone', uniqueUserPhones);
-      for (const u of (usersData || [])) userNicknameMap.set(u.phone, u.nickname || '');
-    }
+    for (const u of (usersRes.data || [])) userNicknameMap.set(u.phone, u.nickname || '');
 
     // 组装结果（纯内存操作、零DB调用）
     const enrichedSeries = seriesList.map((series: any) => {
@@ -6650,7 +7212,7 @@ app.get(`${PREFIX}/community/series/:id`, async (c) => {
     const seriesId = c.req.param('id');
     const userPhone = c.req.query('userPhone') || '';
 
-    // v6.0.26: 移��likes_count/shares_count/comments_count（series表无此列），改为并行count查询
+    // v6.0.26: 移除likes_count/shares_count/comments_count（series表无此列），改为并行count查询
     const { data: series, error } = await queryWithRetry(
       () => supabase.from('series').select('id, user_phone, title, description, genre, style, cover_image_url, total_episodes, created_at, updated_at, coherence_check').eq('id', seriesId).maybeSingle(),
       'getSeriesDetail'
@@ -6664,7 +7226,7 @@ app.get(`${PREFIX}/community/series/:id`, async (c) => {
       return c.json({ success: false, error: '该作品为私有，仅作者可查看' }, 403);
     }
 
-    // v6.0.26: 并行获取剧集、分镜、点赞状态、昵称、点赞数、评论数（6个独立查询并行���
+    // v6.0.26: 并行获取剧集、分镜、点赞状态、昵称、点赞数、评论数（6个独立查询并行）
     const [episodesRes, storyboardsRes, likeStatusRes, nicknameRes, likesCountRes, commentsCountRes] = await Promise.all([
       // v6.0.24: episodes仅需播放器展示字段
       supabase.from('series_episodes').select('id, episode_number, title, synopsis, thumbnail_url, merged_video_url, total_duration, status').eq('series_id', seriesId).order('episode_number', { ascending: true }),
@@ -6688,7 +7250,7 @@ app.get(`${PREFIX}/community/series/:id`, async (c) => {
     const detailLikesCount = likesCountRes.count || 0;
     const detailCommentsCount = commentsCountRes.count || 0;
 
-    // 将分镜关联到剧集 ��� v5.4.1: 自动从分镜构建播放列表
+    // 将分镜关联到剧集 — v5.4.1: 自动从分镜构建播放列表
     // v6.0.89: O(N×M)→O(N+M) 优化——用Map索引替代逐集filter
     const sbMap2 = new Map<number, any[]>();
     for (const sb of (storyboards || [])) {
@@ -6780,7 +7342,7 @@ app.get(`${PREFIX}/community/series/:id/similar`, async (c) => {
     const seriesId = c.req.param('id');
     const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '6') || 6, 1), 20);
 
-    // 先获取当前系列的 genre 和 style
+    // 先���取当前系列的 genre 和 style
     const { data: current, error: curErr } = await supabase
       .from('series')
       .select('genre, style')
@@ -6792,7 +7354,7 @@ app.get(`${PREFIX}/community/series/:id/similar`, async (c) => {
     }
 
     // 按 genre 匹配 → style 匹配 → 最新，排除自身，只取已完成的
-    // v6.0.26: 移除likes_count（series表无此列），改��created_at排序+批量likes count
+    // v6.0.26: 移除likes_count（series表无此列），改为created_at排序+批量likes count
     const { data: similar, error: simErr } = await supabase
       .from('series')
       .select('id, title, description, genre, style, cover_image_url, created_at, total_episodes, user_phone')
@@ -6855,7 +7417,7 @@ app.get(`${PREFIX}/community/series/:id/similar`, async (c) => {
 //  [N] 管理维护 — 补全路由 / 诊断修复 / 去重清理
 // ------------------------------------------------------------------
 
-// ==================== 其他补全路由 ====================
+// ==================== [Q] 其他补全路由 ====================
 
 app.get(`${PREFIX}/viewing-history`, async (c) => {
   try {
@@ -6892,7 +7454,7 @@ app.post(`${PREFIX}/series/storyboards/:storyboardId/generate-video`, async (c) 
   } catch (error: any) { console.error('[POST /series/storyboards/:storyboardId/generate-video] Error:', error); return c.json({ success: false, error: error.message }, 500); }
 });
 
-// ==================== 数据诊断修复路由 ====================
+// ==================== [Q] 数据诊断修复路由 ====================
 
 // 修复单个漫剧的episodes（诊断工具使用）
 app.post(`${PREFIX}/series/:id/fix-episodes`, async (c) => {
@@ -6918,7 +7480,7 @@ app.post(`${PREFIX}/series/:id/fix-episodes`, async (c) => {
 
     // 使用模板生成episodes
     const titles = ['命运的开端','初次交锋','暗流涌动','转折点','真相初现','并肩作战','信任危机','绝地反击','最终决战','尘埃落定'];
-    const synopses = ['主角登场，日常中遭遇意外事���。','面对第一个挑战，遇到重要配角。','暗中势力浮现，事情复杂化。','关键信息揭露，信念受动摇。','真相渐清晰，新危机酝酿。','并肩作战，友情升华。','信任考验，独自面对困境。','绝境中找到新力量。','终极对决，命运揭晓。','尘埃落定，完成成长。'];
+    const synopses = ['主角登场，日常中遭遇意外事件。','面对第一个挑战，遇到重要配角。','暗中势力浮现，事情复杂化。','关键信息揭露，信念受动摇。','真相渐清晰，新危机酝酿。','并肩作战，友情升华。','信任考验，独自面对困境。','绝境中找到新力量。','终极对决，命运揭晓。','尘埃落定，完成成长。'];
 
     // 先删除旧数据
     await supabase.from('series_episodes').delete().eq('series_id', seriesId);
@@ -6948,7 +7510,7 @@ app.post(`${PREFIX}/series/:id/fix-episodes`, async (c) => {
   }
 });
 
-// ==================== 数据清理与去重（v5.6.3） ====================
+// ==================== [Q] 数据清理与去重（v5.6.3） ====================
 
 // GET /admin/data-health — 数据健康诊断（不修改数据）
 app.get(`${PREFIX}/admin/data-health`, async (c) => {
@@ -7071,7 +7633,7 @@ app.post(`${PREFIX}/admin/cleanup-duplicates`, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const dryRun = body.dryRun !== false; // 默认 dry run，不实际删除
-    const fixMergedUrls = body.fixMergedUrls !== false; // ��认修复 merged_video_url
+    const fixMergedUrls = body.fixMergedUrls !== false; // 默认修复 merged_video_url
     const cleanOrphans = body.cleanOrphans === true; // 默认不清理孤儿数据
 
     console.log(`[Admin] cleanup-duplicates: dryRun=${dryRun}, fixMergedUrls=${fixMergedUrls}, cleanOrphans=${cleanOrphans}`);
@@ -7314,7 +7876,7 @@ app.post(`${PREFIX}/admin/rebuild-merged-urls`, async (c) => {
 
     for (const ep of (episodes || [])) {
       try {
-        // v6.0.23: 从批量预取结果中获取，替代逐集查询
+        // v6.0.23: 从批量预取结果中获取，替��逐集查询
         const rawStoryboards = rebuildSbMap.get(`${ep.series_id}:${ep.episode_number}`) || [];
 
         const storyboards = rawStoryboards.filter((sb: any) => {
@@ -7378,7 +7940,7 @@ app.post(`${PREFIX}/admin/rebuild-merged-urls`, async (c) => {
   }
 });
 
-// ==================== v6.0.16: 图片上传（参考图等） ====================
+// ==================== [R] 图片上传（参考图等） ====================
 
 app.post(`${PREFIX}/upload-image`, async (c) => {
   try {
@@ -7427,7 +7989,7 @@ app.post(`${PREFIX}/upload-image`, async (c) => {
   }
 });
 
-// ==================== OSS URL 签名（公开桶直接返回原URL） ====================
+// ==================== [R] OSS URL 签名（公开桶直接返回原URL） ====================
 // v5.5.0: 响应格式必须与前端期望严格匹配
 
 // 单URL签名 — 前端期望 result.data.signedUrl
@@ -7438,6 +8000,20 @@ app.post(`${PREFIX}/oss/sign-url`, async (c) => {
     return c.json({ success: true, data: { signedUrl: url || '' } });
   } catch (error: any) {
     console.error('[OSS] sign-url error:', error.message);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// v6.0.139: OSS CORS 状态查询 + 手动触发配置（?force=true 重置缓存强制重试）
+app.get(`${PREFIX}/oss/cors-status`, async (c) => {
+  try {
+    const force = c.req.query('force') === 'true';
+    if (force) {
+      resetOSSCorsCache();
+    }
+    const result = await ensureOSSCors();
+    return c.json({ success: true, data: result, forced: force });
+  } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -7480,7 +8056,7 @@ app.post(`${PREFIX}/oss/fetch-json`, async (c) => {
   }
 });
 
-// ==================== v6.0.3: 系列视频任务状态查询 ====================
+// ==================== [R] 系列视频任务状态查询 ====================
 
 // 查询指定系列所有分镜的视频任务状态 — 前端批量生成前调用，避免重复创建
 app.get(`${PREFIX}/series/:seriesId/video-task-status`, async (c) => {
@@ -7500,7 +8076,7 @@ app.get(`${PREFIX}/series/:seriesId/video-task-status`, async (c) => {
       return c.json({ error: taskErr.message }, 500);
     }
 
-    // 2. 从 series_storyboards 查询已有 video_url 的分镜（可能由其他路径写入）
+    // 2. 从 series_storyboards 查询已有 video_url 的分镜（可能��其他路径写入）
     const { data: storyboards } = await supabase.from('series_storyboards')
       .select('id, episode_number, scene_number, video_url, status, video_task_id')
       .eq('series_id', seriesId)
@@ -7571,7 +8147,7 @@ app.get(`${PREFIX}/series/:seriesId/video-task-status`, async (c) => {
   }
 });
 
-// ==================== 404处理 ====================
+// ==================== [S] 404处理 ====================
 
 app.notFound((c) => c.json({ error: "404 Not Found", path: c.req.path, version: APP_VERSION }, 404));
 

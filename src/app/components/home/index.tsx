@@ -8,7 +8,7 @@ import { useRef, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { Film, Star, Loader2, ImagePlus, X as XIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { apiUpload } from '../../utils';
+import { apiUpload, getErrorMessage } from '../../utils';
 import type { Series } from '../../types';
 
 // ═══════════════════════════════════════════════════════════════════
@@ -109,7 +109,7 @@ export function RecentSeriesCard({ series, onEdit }: { series: Series; onEdit?: 
 
 // ═══════════════════════════════════════════════════════════════════
 // [D] ReferenceImageInput (was: ReferenceImageInput.tsx)
-// ═══════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════���══════
 
 interface ReferenceImageInputProps {
   referenceImage: string | null; referenceImagePreview: string | null; isUploadingRef: boolean; isCreating: boolean; userPhone?: string;
@@ -138,7 +138,7 @@ export function ReferenceImageInput({
       const result = await apiUpload('/upload-image', formData, { headers: userPhone ? { 'X-User-Phone': userPhone } : {} });
       if (result.success && result.data?.url) { onReferenceImageChange(result.data.url); toast.success('参考图上传成功'); }
       else { throw new Error(result.error || '上传失败'); }
-    } catch (err: any) { console.error('[ReferenceImageInput] Upload failed:', err); toast.error('参考图上传失败: ' + err.message); onReferenceImagePreviewChange(null); }
+    } catch (err: unknown) { console.error('[ReferenceImageInput] Upload failed:', err); toast.error('参考图上传失败: ' + getErrorMessage(err)); onReferenceImagePreviewChange(null); }
     finally { onIsUploadingRefChange(false); if (refImageInputRef.current) refImageInputRef.current.value = ''; }
   }, [userPhone, onShowLogin, onReferenceImageChange, onReferenceImagePreviewChange, onIsUploadingRefChange]);
 

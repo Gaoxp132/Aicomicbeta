@@ -5,6 +5,7 @@ import { Button, Label } from '../ui';
 import { toast } from 'sonner';
 import { apiPost, apiDelete, apiRequest } from '../../utils';
 import type { Character } from '../../types';
+import { ConfirmDialog, useConfirm } from './ConfirmDialog';
 
 interface CharacterManagerProps {
   characters: Character[];
@@ -25,6 +26,7 @@ export function CharacterManager({ characters, seriesId, userPhone, onUpdate, se
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isAIGenerating, setIsAIGenerating] = useState(false);
+  const { confirm: confirmAction, dialogProps } = useConfirm();
   const [formData, setFormData] = useState<Partial<Character>>({
     name: '',
     description: '',
@@ -118,7 +120,15 @@ export function CharacterManager({ characters, seriesId, userPhone, onUpdate, se
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个角色吗？')) return;
+    const confirmed = await confirmAction({
+      title: '删除角色',
+      description: '确定要删除这个角色吗？',
+      confirmText: '确认删除',
+      cancelText: '取消',
+      variant: 'danger',
+      icon: 'delete',
+    });
+    if (!confirmed) return;
 
     const result = await apiDelete(`/series/${seriesId}/characters/${id}`);
     if (!result.success) {
@@ -412,6 +422,7 @@ export function CharacterManager({ characters, seriesId, userPhone, onUpdate, se
           </div>
         </div>
       )}
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }

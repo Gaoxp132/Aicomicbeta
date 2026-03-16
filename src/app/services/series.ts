@@ -5,7 +5,7 @@
 
 import { apiRequest } from '../utils';
 import type { ApiResponse, Series, SeriesFormData, Episode, Storyboard } from '../types';
-import { isEdgeFunctionReachable } from '../utils';
+import { isEdgeFunctionReachable, getErrorMessage } from '../utils';
 
 // ═══════════════════════════════════════════════════════════════════
 // [1] seriesService — CRUD + polling
@@ -43,14 +43,14 @@ export async function createSeries(
     }
 
     const newSeries = result.data;
-    triggerAutoGeneration(newSeries.id, formData, userPhone).catch(error => {
+    triggerAutoGeneration(newSeries.id, formData, userPhone).catch((error: unknown) => {
       console.error('[SeriesService] Auto-generation error:', error);
     });
 
     return { success: true, data: { ...newSeries, status: 'generating' } };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[SeriesService] Error creating series:', error);
-    return { success: false, error: error.message || '创建失败' };
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -69,18 +69,18 @@ async function triggerAutoGeneration(
         style: formData.style,
         enableAudio: false,
       }),
-      timeout: 300000, // v6.0.75: 增加到5分钟（AI生成本身耗时2-3分钟）
-      maxRetries: 0,   // v6.0.75: 禁止重试——generate-full-ai是长时任务，重试会导致重复生成
+      timeout: 15000,  // v6.0.143: 300s→15s — fire-and-forget, 仅确认服务器收到请求
+      maxRetries: 0,
+      silent: true,    // v6.0.143: 不打印 "Failed to fetch" — 超时断连是正常行为，轮询会跟踪进度
     });
 
-    if (!result.success) {
-      console.error('[SeriesService] generate-full-ai failed:', result.error);
-    } else {
-      console.log('[SeriesService] generate-full-ai completed:', result.data);
+    if (result.success) {
+      console.log('[SeriesService] generate-full-ai request acknowledged:', result.data?.alreadyGenerating ? 'already generating' : 'started');
     }
-  } catch (error: any) {
-    console.error('[SeriesService] Failed to trigger auto-generation:', error);
-    throw error;
+    // 不需要处理 !result.success — 超时/断连是正常行为，服务端继续处理，轮询会检测
+  } catch (error: unknown) {
+    // 网络错误也不需要 throw — 服务端可能已收到请求并在处理中
+    console.log('[SeriesService] generate-full-ai fire-and-forget (server may still be processing):', getErrorMessage(error));
   }
 }
 
@@ -89,27 +89,30 @@ export async function retrySeries(
   userPhone: string,
   storyOutline: string
 ): Promise<{ success: boolean; data?: any; error?: string }> {
-  const statusResult = await apiRequest(`/series/${seriesId}/generate`, {
+  // v6.0.148: /generate is best-effort status pre-set — don't bail out on failure
+  // generate-full-ai independently sets status='generating' via updateProgress
+  apiRequest(`/series/${seriesId}/generate`, {
     method: 'POST',
     body: JSON.stringify({}),
-    timeout: 10000,
-  });
-
-  if (!statusResult.success) {
-    console.error('[SeriesService] retrySeries: failed to set generating status:', statusResult.error);
-    return statusResult;
-  }
+    timeout: 8000,
+    maxRetries: 0,
+    silent: true,
+  }).then(r => {
+    if (!r.success) console.warn('[SeriesService] retrySeries: /generate best-effort failed (generate-full-ai will handle status):', r.error);
+  }).catch(() => {});
 
   apiRequest(`/series/${seriesId}/generate-full-ai`, {
     method: 'POST',
     body: JSON.stringify({ userPhone, storyOutline, forceRetry: true }),
-    timeout: 300000, // v6.0.75: 增加到5分钟
-    maxRetries: 0,   // v6.0.75: 禁止重试——防止重复生成
+    timeout: 15000,  // v6.0.143: 300s→15s — fire-and-forget, 轮询会跟踪进度
+    maxRetries: 0,
+    silent: true,    // v6.0.143: 超时断连是正常行为
   }).then(result => {
-    if (result.success) console.log('[SeriesService] retrySeries → generate-full-ai completed');
-    else console.error('[SeriesService] retrySeries → generate-full-ai failed:', result.error);
-  }).catch(error => {
-    console.error('[SeriesService] retrySeries → generate-full-ai error:', error);
+    if (result.success) console.log('[SeriesService] retrySeries → generate-full-ai acknowledged');
+    // 不需要 error log — 超时断连是正常行为
+  }).catch(() => {
+    // 网络错误静默处理 — 服务端可能已收到请求并在处理中
+    console.log('[SeriesService] retrySeries → generate-full-ai fire-and-forget (server may still be processing)');
   });
 
   return { success: true, data: { status: 'generating' } };
@@ -121,9 +124,9 @@ export async function getUserSeries(
   try {
     const url = `/series?userPhone=${encodeURIComponent(userPhone)}`;
     return await apiRequest(url, { method: 'GET', silent: true, maxRetries: 2 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[SeriesService] Error fetching series:', error);
-    return { success: false, error: error.message, data: [], count: 0 };
+    return { success: false, error: getErrorMessage(error), data: [], count: 0 };
   }
 }
 
@@ -156,22 +159,41 @@ export async function generateFullAI(
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
     if (onProgress) onProgress('正在启动完整生成流程...');
-    const result = await apiRequest(`/series/${seriesId}/generate-full-ai`, {
+    // v6.0.148: /generate is best-effort status pre-set — don't await/block on failure
+    // generate-full-ai independently sets status='generating' via updateProgress(0,6,'准备中...')
+    apiRequest(`/series/${seriesId}/generate`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+      timeout: 8000,
+      maxRetries: 0,
+      silent: true,
+    }).then(r => {
+      if (!r.success) console.warn('[SeriesService] generateFullAI: /generate best-effort failed (generate-full-ai will handle status):', r.error);
+    }).catch(() => {});
+
+    // 发送生成请求（fire-and-forget，15s超时仅确认收到）
+    apiRequest(`/series/${seriesId}/generate-full-ai`, {
       method: 'POST',
       body: JSON.stringify({ userPhone }),
-      timeout: 300000, // v6.0.75: 增加到5分钟
-      maxRetries: 0,   // v6.0.75: 禁止重试——防止重复生成
+      timeout: 15000,  // v6.0.143: 300s→15s — fire-and-forget
+      maxRetries: 0,
+      silent: true,    // v6.0.143: 超时断连是正常行为
+    }).then(result => {
+      if (result.success) console.log('[SeriesService] generateFullAI acknowledged');
+    }).catch(() => {
+      console.log('[SeriesService] generateFullAI fire-and-forget (server may still be processing)');
     });
-    if (result.success) return { success: true, data: result.data };
-    else throw new Error(result.error || '一键完整生成失败');
-  } catch (error: any) {
-    return { success: false, error: error.message || '一键完整生成失败' };
+
+    // 立即返回 success — 轮询机制会检测实际进度
+    return { success: true, data: { message: '生成请求已发送，轮询将跟踪进度', fireAndForget: true } };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) || '一键完整生成失败' };
   }
 }
 
 export async function updateSeries(
   seriesId: string,
-  updates: Partial<Series>
+  updates: Partial<Series> & Record<string, unknown>
 ): Promise<{ success: boolean; data?: Series; error?: string }> {
   return apiRequest(`/series/${seriesId}`, {
     method: 'PUT',
@@ -212,14 +234,14 @@ async function getSeriesDetails(
       if (result.error === 'offline') return result;
       if (result.error?.includes('timeout') || result.error?.includes('connection')) return { success: false, error: 'offline' };
       if (result.error?.includes('500') || result.error?.includes('Internal server error')) return { success: false, error: 'offline' };
-      if (result.error?.includes('数据库查询错误') || (result as any).retryable) return { success: false, error: 'offline' };
+      if (result.error?.includes('数据库查询错误') || result.retryable) return { success: false, error: 'offline' };
       console.error('[SeriesService] Error loading series:', result.error);
       return result;
     }
     return result;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[SeriesService] Error fetching series details:', error);
-    return { success: false, error: error.message };
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -249,7 +271,7 @@ export function pollSeriesProgress(
         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) { if (isPolling) timeoutId = setTimeout(poll, 30000); return; }
       }
       if (isPolling) timeoutId = setTimeout(poll, interval);
-    } catch (error: any) {
+    } catch (error: unknown) {
       consecutiveFailures++;
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) { if (isPolling) timeoutId = setTimeout(poll, 30000); return; }
       if (isPolling) timeoutId = setTimeout(poll, interval);
@@ -273,9 +295,9 @@ export async function generateEpisodeOutlines(
   try {
     const result = await apiRequest('/ai/generate-episodes', { method: 'POST', body: JSON.stringify(request), timeout: 60000, maxRetries: 2 });
     if (!result.success) return { success: false, error: result.error || '生成失败' };
-    return { success: true, episodes: (result as any).episodes };
-  } catch (error: any) {
-    return { success: false, error: error.message || '网络错误' };
+    return { success: true, episodes: result.episodes };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) || '网络错误' };
   }
 }
 

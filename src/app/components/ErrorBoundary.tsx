@@ -180,7 +180,7 @@ export class ErrorBoundary extends Component<Props, State> {
       //   headers: { 'Content-Type': 'application/json' },
       //   body: JSON.stringify(errorData),
       // }).catch(console.error);
-    } catch (loggingError) {
+    } catch (loggingError: unknown) {
       // Failed to log, ignore
     }
   }

@@ -5,7 +5,7 @@ import { Play, Edit, Calendar, ChevronDown, ChevronUp, Film, Clock, AlertTriangl
 import { VideoPlayer } from '../VideoPlayer';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Episode } from '../../types';
-import { formatDuration, getAspectCssValue } from '../../utils';
+import { formatDuration, getAspectCssValue, epMergedVideoUrl } from '../../utils';
 
 // ── Inline: VideoErrorFallback (was ../VideoErrorFallback.tsx) ───
 function VideoErrorFallback({ episode, error, onRepair }: {
@@ -82,7 +82,7 @@ export const EpisodeCard = memo(function EpisodeCard({
   onRepair,
 }: EpisodeCardProps) {
   // Check if episode has merged video
-  const mergedVideoUrl = episode.mergedVideoUrl || (episode as any).merged_video_url;
+  const mergedVideoUrl = epMergedVideoUrl(episode);
   const hasValidMergedVideo = mergedVideoUrl && typeof mergedVideoUrl === 'string' && mergedVideoUrl.trim().length > 0;
 
   return (

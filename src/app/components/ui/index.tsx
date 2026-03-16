@@ -67,7 +67,7 @@ function Button({
   size?: string;
   asChild?: boolean;
 }) {
-  const { asChild, ...rest } = props as any;
+  const { asChild, ...rest } = props;
   return (
     <button
       data-slot="button"
@@ -103,7 +103,7 @@ function Badge({
   variant = "default",
   ...props
 }: React.ComponentProps<"span"> & { variant?: string; asChild?: boolean }) {
-  const { asChild, ...rest } = props as any;
+  const { asChild, ...rest } = props;
   return (
     <span
       data-slot="badge"

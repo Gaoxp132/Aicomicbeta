@@ -9,6 +9,8 @@ import { Button, Input } from './ui';
 import { APP_VERSION } from '../version';
 import { STORAGE_KEYS, VALIDATION } from '../constants';
 import { apiRequest } from '../utils';
+import { getErrorMessage } from '../utils';
+import { ConfirmDialog, useConfirm } from './series/ConfirmDialog';
 
 // ── Inline: DataCleanupPanel (was DataCleanupPanel.tsx) ──────────
 function StatCard({ label, value, subValue, variant }: { label: string; value: number; subValue?: string; variant: 'info' | 'success' | 'warning' | 'danger' }) {
@@ -29,31 +31,53 @@ function DataCleanupPanel() {
   const [rebuildResult, setRebuildResult] = useState<any>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [activeAction, setActiveAction] = useState<string | null>(null);
+  // v6.0.178: 二次确认弹窗替代原生 confirm()
+  const { confirm: confirmAction, dialogProps } = useConfirm();
 
   const runDiagnostics = async () => {
     setIsLoading(true); setActiveAction('diagnose'); setHealthReport(null); setCleanupResult(null); setRebuildResult(null);
     try { const result = await apiRequest<DataHealthReport>('/admin/data-health', { method: 'GET', timeout: 30000 }); if (result.success && result.data) { setHealthReport(result.data); const s = result.data.summary; if (s.duplicateRows === 0 && s.sbDuplicateRows === 0 && s.orphanedEpisodeCount === 0) toast.success('数据健康，无重复或孤儿数据'); else toast.warning(`发现 ${s.duplicateRows} 条重复剧集 + ${s.sbDuplicateRows} 条重复分镜`); } else toast.error('诊断失败: ' + (result.error || '未知错误')); }
-    catch (error: any) { toast.error('诊断请求失败: ' + error.message); }
+    catch (error: unknown) { toast.error('诊断请求失败: ' + getErrorMessage(error)); }
     finally { setIsLoading(false); setActiveAction(null); }
   };
   const previewCleanup = async () => {
     setIsLoading(true); setActiveAction('preview'); setCleanupResult(null);
     try { const result = await apiRequest<CleanupResult>('/admin/cleanup-duplicates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dryRun: true, fixMergedUrls: false, cleanOrphans: false }), timeout: 60000 }); if (result.success && result.data) { setCleanupResult(result.data); toast.info(`预览: 将删除 ${result.data.summary.wouldDeleteEpisodes} 条重复剧集, ${result.data.summary.wouldDeleteStoryboards} 条重复分镜`); } else toast.error('预览失败: ' + (result.error || '未知错误')); }
-    catch (error: any) { toast.error('预览请求失败: ' + error.message); }
+    catch (error: unknown) { toast.error('预览请求失败: ' + getErrorMessage(error)); }
     finally { setIsLoading(false); setActiveAction(null); }
   };
   const executeCleanup = async (options: { fixMergedUrls: boolean; cleanOrphans: boolean }) => {
-    if (!confirm(options.cleanOrphans ? '确定要执行清理？这将删除所有重复数据和孤儿数据，此操作不可撤销！' : '确定要执行清理？这将删除所有重复数据，此操作不可撤销！')) return;
+    const confirmed = await confirmAction({
+      title: options.cleanOrphans ? '确认清理孤儿数据' : '确认清理重复数据',
+      description: options.cleanOrphans
+        ? '这将删除所有重复数据和孤儿数据，此操作不可撤销！'
+        : '这将删除所有重复数据，此操作不可撤销！',
+      confirmText: '确认执行',
+      cancelText: '取消',
+      variant: 'danger',
+      icon: 'delete',
+    });
+    if (!confirmed) return;
     setIsLoading(true); setActiveAction('execute');
     try { const result = await apiRequest<CleanupResult>('/admin/cleanup-duplicates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dryRun: false, fixMergedUrls: options.fixMergedUrls, cleanOrphans: options.cleanOrphans }), timeout: 120000 }); if (result.success && result.data) { setCleanupResult(result.data); const s = result.data.summary; toast.success(`清理完成: 删除 ${s.deletedEpisodes} 条重复剧集, ${s.deletedStoryboards} 条重复镜, 修复 ${s.fixedMergedUrls} 条URL`); setTimeout(runDiagnostics, 1000); } else toast.error('清理失败: ' + (result.error || '未知错误')); }
-    catch (error: any) { toast.error('清理请求失败: ' + error.message); }
+    catch (error: unknown) { toast.error('清理请求失败: ' + getErrorMessage(error)); }
     finally { setIsLoading(false); setActiveAction(null); }
   };
   const rebuildMergedUrls = async (forceRebuild: boolean = false) => {
-    if (forceRebuild && !confirm('确定要强制重建所有剧集的播放列表URL？这将覆盖已有的URL。')) return;
+    if (forceRebuild) {
+      const confirmed = await confirmAction({
+        title: '确认强制重建',
+        description: '确定要强制重建所有剧集的播放列表URL？这将覆盖已有的URL。',
+        confirmText: '强制重建',
+        cancelText: '取消',
+        variant: 'warning',
+        icon: 'regenerate',
+      });
+      if (!confirmed) return;
+    }
     setIsLoading(true); setActiveAction('rebuild'); setRebuildResult(null);
     try { const result = await apiRequest('/admin/rebuild-merged-urls', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ forceRebuild }), timeout: 120000 }); if (result.success && result.data) { setRebuildResult(result.data); toast.success(`重建完成: ${result.data.rebuilt} 个剧集的播放列表已更新`); } else toast.error('重建失败: ' + (result.error || '未知错误')); }
-    catch (error: any) { toast.error('重建请求失败: ' + error.message); }
+    catch (error: unknown) { toast.error('重建请求失败: ' + getErrorMessage(error)); }
     finally { setIsLoading(false); setActiveAction(null); }
   };
 
@@ -100,6 +124,7 @@ function DataCleanupPanel() {
       </AnimatePresence>
       <AnimatePresence>{cleanupResult && <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className={`rounded-lg p-3 text-sm ${cleanupResult.summary.dryRun ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-green-500/10 border border-green-500/20'}`}><div className="flex items-center gap-2 mb-2">{cleanupResult.summary.dryRun ? <AlertTriangle className="w-4 h-4 text-amber-400" /> : <CheckCircle className="w-4 h-4 text-green-400" />}<span className={`font-medium ${cleanupResult.summary.dryRun ? 'text-amber-400' : 'text-green-400'}`}>{cleanupResult.summary.dryRun ? '预览结果（未执行）' : '清理完成'}</span></div><div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs"><span className="text-gray-400">重复剧集:</span><span className="text-white">{cleanupResult.summary.dryRun ? cleanupResult.summary.wouldDeleteEpisodes : cleanupResult.summary.deletedEpisodes} 条</span><span className="text-gray-400">重复分镜:</span><span className="text-white">{cleanupResult.summary.dryRun ? cleanupResult.summary.wouldDeleteStoryboards : cleanupResult.summary.deletedStoryboards} 条</span>{cleanupResult.summary.fixedMergedUrls > 0 && <><span className="text-gray-400">修复URL:</span><span className="text-white">{cleanupResult.summary.fixedMergedUrls} 条</span></>}{cleanupResult.summary.deletedOrphans > 0 && <><span className="text-gray-400">清理孤儿:</span><span className="text-white">{cleanupResult.summary.deletedOrphans} 条</span></>}</div></motion.div>}</AnimatePresence>
       <AnimatePresence>{rebuildResult && <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3 text-sm"><div className="flex items-center gap-2 mb-2"><CheckCircle className="w-4 h-4 text-purple-400" /><span className="font-medium text-purple-400">播放列表重建完成</span></div><div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs"><span className="text-gray-400">已重建:</span><span className="text-white">{rebuildResult.rebuilt} 个剧集</span><span className="text-gray-400">跳过(无视频):</span><span className="text-white">{rebuildResult.skipped} 个</span>{rebuildResult.failed > 0 && <><span className="text-gray-400">失败:</span><span className="text-red-400">{rebuildResult.failed} 个</span></>}</div></motion.div>}</AnimatePresence>
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }
@@ -116,27 +141,38 @@ export function SettingsDialog({ isOpen, onClose, userPhone, onLogout }: Setting
   const [showPhoneCorrection, setShowPhoneCorrection] = useState(false);
   const [showDataManagement, setShowDataManagement] = useState(false);
   const [newPhone, setNewPhone] = useState('');
+  // v6.0.178: 二次确认弹窗
+  const { confirm: confirmAction, dialogProps: settingsDialogProps } = useConfirm();
 
   const handleLogout = () => {
     onLogout();
     onClose();
   };
 
-  const handlePhoneCorrection = () => {
+  const handlePhoneCorrection = async () => {
     if (!VALIDATION.PHONE_REGEX.test(newPhone)) {
       toast.error('请输入正确的11位手机号');
       return;
     }
 
-    if (confirm(`确认要切换到手机号 ${newPhone} 吗？\n\n注意：这将显示该手机号下的所有作品。`)) {
-      localStorage.setItem(STORAGE_KEYS.USER_PHONE, newPhone);
-      localStorage.setItem(STORAGE_KEYS.LOGIN_TIME, new Date().toISOString());
-      toast.success('手机号已更新！页面将刷新以加载新数据。');
-      window.location.reload();
-    }
+    const confirmed = await confirmAction({
+      title: '确认切换手机号',
+      description: `确认要切换到手机号 ${newPhone} 吗？这将显示该手机号下的所有作品。`,
+      confirmText: '确认切换',
+      cancelText: '取消',
+      variant: 'warning',
+      icon: 'question',
+    });
+    if (!confirmed) return;
+
+    localStorage.setItem(STORAGE_KEYS.USER_PHONE, newPhone);
+    localStorage.setItem(STORAGE_KEYS.LOGIN_TIME, new Date().toISOString());
+    toast.success('手机号已更新！页面将刷新以加载新数据。');
+    window.location.reload();
   };
 
   return (
+    <>
     <AnimatePresence>
       {isOpen && (
         <>
@@ -335,5 +371,7 @@ export function SettingsDialog({ isOpen, onClose, userPhone, onLogout }: Setting
         </>
       )}
     </AnimatePresence>
+    <ConfirmDialog {...settingsDialogProps} />
+    </>
   );
 }

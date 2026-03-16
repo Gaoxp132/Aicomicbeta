@@ -1,5 +1,6 @@
 /**
  * 辅助函数模块 - 电影学辅助功能 + JSON修复 + 空dialogue补填
+ * v6.0.159: 重写dialogue补填——注入文学级对白模板，消除"soap opera"感
  * v6.0.85: 新增 repairTruncatedStoryboardJSON, detectAndFillEmptyDialogues
  * v6.0.77: getCinematographyBlock
  */
@@ -209,7 +210,8 @@ function extractCompleteSceneObjects(chunk: string): any[] {
 
 /**
  * v6.0.85: 检测并补填空dialogue的分镜
- * 返回需要补填的场景索引列表和补填建议内容
+ * v6.0.159: 彻底重写——从"填空题"升级为"文学级对白生成"
+ * 每个情感基调配备多套对白模板，随机选取避免重复，对白注重潜台词和性格差异
  */
 export function detectAndFillEmptyDialogues(
   allSbRows: any[],
@@ -218,39 +220,83 @@ export function detectAndFillEmptyDialogues(
 ): { filledCount: number; totalEmpty: number } {
   const hero = characterRows[0]?.name || '主角';
   const ally = characterRows[1]?.name || '配角';
+  const third = characterRows[2]?.name || '第三者';
+  // v6.0.159: 角色性格标签用于区分说话方式
+  const heroPersona = characterRows[0]?.personality || '';
+  const allyPersona = characterRows[1]?.personality || '';
   let totalEmpty = 0;
   let filledCount = 0;
+  // v6.0.159: 用计数器在同类型模板间轮转，避免重复
+  let templateCounter = 0;
+
+  // v6.0.159: 文学级对白模板库——每个类别多套，注重潜台词、性格差异、具体细节
+  const OPENING_TEMPLATES = [
+    (h: string, a: string, ep: string) => `${h}：（站在原地，目光落在远处某个不存在的点上）……你有没有觉得，有些事一旦开始就停不下来？\n${a}：（双手插兜，侧头看他）你这话说了不下三遍了。区别是，这次你眼神不一样。`,
+    (h: string, a: string, ep: string) => `${h}：（翻开一封旧信，纸张发出细微的脆响）都过去这么久了……\n${a}：（从门口探进半个身子）发什么呆呢？外面的人都到齐了。\n${h}：（迅速把信叠好塞进口袋）没什么。走吧。`,
+    (h: string, a: string, ep: string) => `${a}：（递过一杯水，动作刻意轻柔）你昨晚又没睡？\n${h}：（接过杯子，指尖微微发抖）做了个梦。梦见了「${ep}」里那件事。\n${a}：（沉默片刻）梦的结局呢？\n${h}：没有结局。我被闹钟吵醒了。`,
+  ];
+
+  const TENSION_TEMPLATES = [
+    (h: string, a: string) => `${h}：（声音压得很低，但每个字都像钉子）你知道这意味着什么。\n${a}：（后退半步，脊背抵上墙壁）我知道。但我选择不知道。\n${h}：（猛地抬头）你没有这个权利！`,
+    (h: string, a: string) => `${a}：（把一叠文件摔在桌上，纸张四散）解释。\n${h}：（看着散落的纸，没有弯腰去捡）就算我解释了，你信吗？\n${a}：（嘴唇抿成一条线）试试看。`,
+    (h: string, a: string) => `${h}：（转身，声音突然平静得可怕）我给过你机会的。\n${a}：（攥紧拳头，关节发白）那不是机会，那是你设的局。\n${h}：（回头，眼神冰冷）区别是什么？`,
+  ];
+
+  const WARM_TEMPLATES = [
+    (h: string, a: string) => `${h}：（低头摆弄手里的东西，不敢对视）其实那天……我本来想说的不是那个。\n${a}：（歪头，嘴角微微上扬）哦？那你本来想说什么？\n${h}：（深吸一口气，抬起头）……算了，说了你会笑我的。`,
+    (h: string, a: string) => `${a}：（把围巾绕到${h}脖子上，动作笨拙但认真）别犟了。外面零下十度。\n${h}：（愣住，喉结上下滚动）你什么时候……多带了一条围巾？\n${a}：（转身快步走开，耳尖泛红）天气预报说的，不是专门给你带的。`,
+    (h: string, a: string) => `${h}：（把一盒东西推到${a}面前，假装随意）路上看到的，顺手买的。\n${a}：（打开，怔住）这……这不是我上个月随口提过一次的那个？\n${h}：（别开脸）记性好而已。没什么特别的。`,
+  ];
+
+  const SUSPENSE_TEMPLATES = [
+    (h: string, a: string) => `${h}：（蹲下，手指拂过地上的痕迹）这不对……\n${a}：（警觉地环顾四周）哪里不对？\n${h}：（站起来，脸色骤变）这个痕迹是新的。五分钟之内。也就是说——\n${a}：（瞳孔收缩）他还在这里。`,
+    (h: string, a: string) => `${a}：（压低声音，几乎是唇语）门后面有人。\n${h}：（慢慢把手伸向桌子下面）几个？\n${a}：（竖起两根手指）\n${h}：（闭眼，深呼吸，然后睁开——眼中恐惧已被冷静取代）你数到三。`,
+    (h: string, a: string) => `${h}：（盯着手机屏幕，脸色发白）你看这个。\n${a}：（凑过来，表情从困惑变成震惊）不可能……这个人不是已经……\n${h}：（关掉屏幕，声音发颤）所以要么我们搞错了，要么——有人在用一个死人的身份。`,
+  ];
+
+  const CLIMAX_TEMPLATES = [
+    (h: string, a: string, t: string) => `${h}：（声音嘶哑，眼眶泛红但一滴泪没掉）我不是你以为的那种人。我从来都不是。\n${a}：（后退，像被泼了冷水）那你到底是谁？\n${h}：（苦笑）一个一直在演戏的人。只是戏演久了，连自己都分不清了。`,
+    (h: string, a: string, t: string) => `${a}：（走到窗前，背对着所有人）当初我说过，不管发生什么我都站你这边。\n${h}：（声音沙哑）但是——\n${a}：（猛地转身，眼中全是血丝）但你骗了我！你让我用信任当筹码，赌的是一场你早知道结局的戏！`,
+    (h: string, a: string, t: string) => `${h}：（跪在雨中，把一样东西举过头顶）这是你一直要找的东西。拿走吧。\n${a}：（雨水模糊了视线，声音在颤抖）你为什么现在才……\n${h}：（苦笑，雨水从嘴角流过）因为直到今天我才确定——它对你比对我重要。`,
+  ];
+
+  const GENERAL_TEMPLATES = [
+    (h: string, a: string, ep: string) => `${h}：你觉得「${ep}」这件事，会怎么收场？\n${a}：（想了想）最好的情况和最坏的情况，你想听哪个？\n${h}：先说最坏的。\n${a}：最坏的情况就是——它已经发生了，只是我们还不知道。`,
+    (h: string, a: string, ep: string) => `${a}：（放下手里的东西，认真地看着${h}）我问你一个问题，你必须说实话。\n${h}：（警惕起来）什么问题？\n${a}：如果时间倒回去，你还会做同样的选择吗？\n${h}：（沉默了很久）……会。但会用不同的方式。`,
+    (h: string, a: string, ep: string) => `${h}：（走到地图前，手指点在某个位置）从这里到那里，正常人需要三天。\n${a}：我们不是正常人。\n${h}：（嘴角勾起一个弧度）对。所以我给我们留了两天。\n${a}：（挑眉）那多出来的一天呢？\n${h}：用来犯错。计划赶不上变化，得给意外留余量。`,
+  ];
 
   for (const row of allSbRows) {
     if (!row.dialogue || row.dialogue.trim().length < 3) {
       totalEmpty++;
-      // 根据场景描述和emotionalTone自动生成基础对话
       const epOutline = episodeOutlines.find((ep: any) => ep.episodeNumber === row.episode_number);
-      const epTitle = epOutline?.title || '';
+      const epTitle = epOutline?.title || '这件事';
       const tone = row.emotional_tone || '';
-      const desc = row.description || '';
-      
-      // 基于情感基调和场景位置生成对话模板
-      let autoDialogue = '';
       const sceneNum = row.scene_number || 1;
-      
+      const idx = templateCounter++;
+
+      let autoDialogue = '';
+
       if (sceneNum === 1) {
-        // 开场
-        autoDialogue = `${hero}：（看向远方）一切都要从这里开始了……\n${ally}：${hero}，你准备好了吗？`;
-      } else if (tone.includes('紧张') || tone.includes('冲突') || tone.includes('愤怒')) {
-        autoDialogue = `${hero}：这件事没有退路了！\n${ally}：冷静点，我们还有机会。`;
-      } else if (tone.includes('温暖') || tone.includes('感动') || tone.includes('温馨')) {
-        autoDialogue = `${hero}：谢谢你一直陪在我身边。\n${ally}：这是我应该做的。`;
-      } else if (tone.includes('悬念') || tone.includes('悬疑') || tone.includes('神秘')) {
-        autoDialogue = `${hero}：总觉得有什么不对劲……\n${ally}：嘘，别出声。`;
-      } else if (sceneNum >= 5) {
-        // 高潮/结尾
-        autoDialogue = `${hero}：原来真相是这样的……\n${ally}：接下来该怎么办？`;
+        const tpls = OPENING_TEMPLATES;
+        autoDialogue = tpls[idx % tpls.length](hero, ally, epTitle);
+      } else if (tone.includes('紧张') || tone.includes('冲突') || tone.includes('愤怒') || tone.includes('对抗')) {
+        const tpls = TENSION_TEMPLATES;
+        autoDialogue = tpls[idx % tpls.length](hero, ally);
+      } else if (tone.includes('温暖') || tone.includes('感动') || tone.includes('温馨') || tone.includes('甜蜜')) {
+        const tpls = WARM_TEMPLATES;
+        autoDialogue = tpls[idx % tpls.length](hero, ally);
+      } else if (tone.includes('悬念') || tone.includes('悬疑') || tone.includes('神秘') || tone.includes('恐惧')) {
+        const tpls = SUSPENSE_TEMPLATES;
+        autoDialogue = tpls[idx % tpls.length](hero, ally);
+      } else if (sceneNum >= 4) {
+        const tpls = CLIMAX_TEMPLATES;
+        autoDialogue = tpls[idx % tpls.length](hero, ally, epTitle);
       } else {
-        // 通用对话
-        autoDialogue = `${hero}：关于「${epTitle}」这件事，我有了新的想法。\n${ally}：说来听听？`;
+        const tpls = GENERAL_TEMPLATES;
+        autoDialogue = tpls[idx % tpls.length](hero, ally, epTitle);
       }
-      
+
       row.dialogue = autoDialogue;
       filledCount++;
     }

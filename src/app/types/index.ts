@@ -29,6 +29,7 @@ export interface Comic {
   userPhone?: string;
   metadata?: any; // v6.0.6: generation_metadata from backend
   seriesId?: string; // v6.0.6: extracted from metadata for task cleanup on series deletion
+  error?: string; // 后端返回的错误信息（status=failed时）
 }
 
 // 社区漫剧系列作品
@@ -43,7 +44,7 @@ export interface CommunitySeriesWork {
   style: string;
   coverImage?: string;
   totalEpisodes: number;
-  completedEpisodes: number; // 已完成的集数
+  completedEpisodes: number; // 已���成的集数
   episodes: {
     id: string;
     episodeNumber: number;

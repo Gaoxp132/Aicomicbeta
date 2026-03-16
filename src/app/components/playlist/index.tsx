@@ -9,6 +9,8 @@ import { RefObject, useRef, useState, useCallback } from 'react';
 import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, AlertCircle, Bug, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { Button } from '../ui';
 import { apiGet, apiPost } from '../../utils';
+import { toast } from 'sonner';
+import { getErrorMessage } from '../../utils';
 
 // ── Inline: VideoUrlDiagnostic (was ../VideoUrlDiagnostic.tsx) ───
 function VideoUrlDiagnostic({ url, onClose }: { url: string; onClose?: () => void }) {
@@ -84,7 +86,7 @@ function QuickVideoTest({ urls, onClose }: { urls: string[]; onClose?: () => voi
       if (headResponse.ok) { r.videoTest = 'pending'; setResults(prev => { const u = [...prev]; u[index] = r; return u; }); const canPlay = await testVideoElement(url); r.canPlay = canPlay; r.videoTest = canPlay ? 'success' : 'error'; if (!canPlay) { r.status = 'error'; r.error = '视频元素无法播放此文件'; } }
       else r.error = `HTTP ${headResponse.status}: ${headResponse.statusText}`;
       setResults(prev => { const u = [...prev]; u[index] = r; return u; });
-    } catch (error: any) { setResults(prev => { const u = [...prev]; u[index] = { url, status: 'error', error: error.message || '网络错误' }; return u; }); }
+    } catch (error: unknown) { setResults(prev => { const u = [...prev]; u[index] = { url, status: 'error', error: getErrorMessage(error) || '网络错误' }; return u; }); }
   };
   const testAllUrls = async () => { setTesting(true); for (let i = 0; i < urls.length; i++) await testUrl(urls[i], i); setTesting(false); };
   return (
@@ -247,22 +249,25 @@ export function PlaylistErrorView({ error, playlist, currentVideo, className, on
   const handleDiagnose = async () => {
     if (!playlist) return; onLoadingChange(true);
     const result = await apiGet(`/episodes/${playlist.episodeId}/diagnose-storyboards`);
-    setDiagnosticResult(result); if (!result.success) alert(`诊断失败: ${result.error}`); onLoadingChange(false);
+    setDiagnosticResult(result); if (!result.success) toast.error(`诊断失败: ${result.error}`); onLoadingChange(false);
   };
   const handleSyncUrls = async () => {
     if (!playlist) return; onLoadingChange(true); setFixResult(null);
     const result = await apiPost(`/episodes/${playlist.episodeId}/sync-storyboard-urls`);
     setFixResult(result);
     if (result.success && result.data?.summary?.synced > 0) setTimeout(() => window.location.reload(), 3000);
-    else if (!result.success) alert(`同步失败: ${result.error}`);
+    else if (!result.success) toast.error(`同步失败: ${result.error}`);
     onLoadingChange(false);
   };
   const handleDebugEpisode = async () => {
     if (!playlist) return; onLoadingChange(true);
     const result = await apiGet(`/debug/episode-data/${playlist.episodeId}`);
     if (result.success) {
-      alert(`📊 剧集调试报告\n━━━━━━━━━━━━━━━━━━━━━━\n📄 ID: ${result.data.episode.id}\n标题: ${result.data.episode.title}\n集数: ${result.data.episode.episode_number}\n视频状态: ${result.data.episode.video_status}\nmerged_video_url长度: ${result.data.episode.merged_video_url_length}\n\n📊 统计\n总数: ${result.data.analysis.totalStoryboards}\n视频数: ${result.data.analysis.mergedVideoCount}\nURL匹配: ${result.data.analysis.allUrlsMatch ? '是' : '否'}\n不匹配: ${result.data.analysis.mismatches?.length || 0}`);
-    } else { alert(`调试失败: ${result.error}`); }
+      const ep = result.data.episode;
+      const analysis = result.data.analysis;
+      toast.info(`调试完成：${ep.title}（第${ep.episode_number}集）| 分镜${analysis.totalStoryboards}个，视频${analysis.mergedVideoCount}个（详见Console F12）`);
+      console.log('[DebugEpisode] 完整报告:', JSON.stringify(result.data, null, 2));
+    } else { toast.error(`调试失败: ${result.error}`); }
     onLoadingChange(false);
   };
 
@@ -290,7 +295,7 @@ export function PlaylistErrorView({ error, playlist, currentVideo, className, on
                   <p>💡 警告: {diagnosticResult.data?.summary?.warningsCount || 0}</p>
                   {diagnosticResult.data?.summary?.shortUrls > 0 && (<p className="text-yellow-400">🚨 发现 {diagnosticResult.data.summary.shortUrls} 个URL过短（可能被截断）</p>)}
                 </div>
-                <button onClick={() => alert(JSON.stringify(diagnosticResult.data?.diagnostics, null, 2))} className="mt-2 px-3 py-1 bg-blue-700 hover:bg-blue-800 rounded text-xs">查看详细报告</button>
+                <button onClick={() => { console.log('[Diagnostics] 详细报告:', JSON.stringify(diagnosticResult.data?.diagnostics, null, 2)); toast.info('详细报告已输出到控制台（F12）'); }} className="mt-2 px-3 py-1 bg-blue-700 hover:bg-blue-800 rounded text-xs">查看详细报告</button>
               </div>
             )}
             {fixResult && (
@@ -326,7 +331,7 @@ export function PlaylistErrorView({ error, playlist, currentVideo, className, on
 
 // ═══════════════════════════════════════════════════════════════════
 // [C] PlaylistOverlays (was: PlaylistOverlays.tsx)
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════���═══════
 
 interface PlaylistOverlaysProps {
   playlist: Playlist; currentIndex: number; isPlaying: boolean; isVideoLoading: boolean; isBuffering: boolean;

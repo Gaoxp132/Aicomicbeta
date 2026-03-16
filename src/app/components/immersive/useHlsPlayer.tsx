@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Hls from '../../lib/hls-shim';
 import { preloadHls } from '../../lib/hls-shim';
+import { getErrorMessage } from '../../utils';
 
 interface UseHlsPlayerOptions {
   videoUrl: string;
@@ -54,13 +55,12 @@ export function useHlsPlayer({ videoUrl, onError }: UseHlsPlayerOptions): UseHls
         }
         if (mp4Urls.length === 0) console.error('[useHlsPlayer] No MP4 URLs found in M3U8 playlist');
         return mp4Urls;
-      } catch (fetchError: any) {
+      } catch (fetchError: unknown) {
         clearTimeout(timeoutId);
-        if (fetchError.name === 'AbortError') throw new Error('视频播放列表获取超时');
         throw fetchError;
       }
-    } catch (error: any) {
-      console.error('[useHlsPlayer] Failed to parse M3U8:', error.message || error);
+    } catch (error: unknown) {
+      console.error('[useHlsPlayer] Failed to parse M3U8:', getErrorMessage(error));
       return [];
     }
   }, []);
@@ -98,7 +98,7 @@ export function useHlsPlayer({ videoUrl, onError }: UseHlsPlayerOptions): UseHls
         setIsLoading(false);
         if (onError) onError();
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('[useHlsPlayer] Fallback failed:', error);
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       const video = videoRef.current;

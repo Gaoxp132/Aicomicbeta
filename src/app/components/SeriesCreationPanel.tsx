@@ -9,6 +9,7 @@ import { SeriesEditor } from './series/SeriesEditor';
 import { useSeries } from '../hooks/media';
 import * as seriesService from '../services';
 import type { Series } from '../types';
+import { getErrorMessage } from '../utils';
 
 interface SeriesCreationPanelProps {
   userPhone?: string;
@@ -102,7 +103,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
           } else {
             console.warn('[SeriesCreation] Completed series has no storyboards, skipping video gen');
           }
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.error('[SeriesCreation] Auto video gen error:', err);
         }
       })();
@@ -172,7 +173,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
               console.error('[SeriesCreation] Auto-generation failed:', result.error);
               toast.error(`视频生成失败: ${result.error}`);
             }
-          } catch (err: any) {
+          } catch (err: unknown) {
             console.error('[SeriesCreation] Auto-generation error:', err);
           }
         }, 1000);
@@ -190,11 +191,11 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
         setView('edit');
       } else {
         console.error('[SeriesCreationPanel] Failed to load series details:', result.error);
-        alert(`加载漫剧详情失败：${result.error}\n\n请稍后重试或刷新页面。`);
+        toast.error(`加载漫剧详情失败：${result.error}`);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[SeriesCreationPanel] Error loading series details:', error);
-      alert(`加载失败：${error.message}\n\n请检查网络连接后重试。`);
+      toast.error(`加载失败：${getErrorMessage(error)}，请检查网络连接后重试。`);
     }
   };
 

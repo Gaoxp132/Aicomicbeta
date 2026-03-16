@@ -36,7 +36,7 @@ function Button({
   size?: string;
   asChild?: boolean; // accepted but ignored — Slot removed
 }) {
-  const { asChild, ...rest } = props as any;
+  const { asChild, ...rest } = props;
   return (
     <button
       data-slot="button"

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Button, Card } from '../ui';
 import { apiPost } from '../../utils';
+import { sbVideoUrl, epMergedVideoUrl } from '../../utils';
 import type { Series } from '../../types';
 import { toast } from 'sonner';
 
@@ -67,17 +68,17 @@ export function SeriesVideoHealthChecker({ series, onRepairNeeded }: { series: S
     };
     const totalStoryboards = episodes.reduce((sum, ep) => sum + (ep.storyboards?.length || 0), 0);
     const storyboardsWithVideo = episodes.reduce((sum, ep) =>
-      sum + (ep.storyboards?.filter(sb => sb.videoUrl || (sb as any).video_url).length || 0), 0);
+      sum + (ep.storyboards?.filter(sb => !!sbVideoUrl(sb)).length || 0), 0);
     const videoDiag: HealthDiagnostic = {
       label: '视频生成', count: storyboardsWithVideo, total: totalStoryboards,
       severity: totalStoryboards === 0 ? 'warn' : storyboardsWithVideo === totalStoryboards ? 'ok' : storyboardsWithVideo === 0 ? 'error' : 'warn',
       details: totalStoryboards > 0 && storyboardsWithVideo < totalStoryboards ? `${totalStoryboards - storyboardsWithVideo} 个分镜缺少视频` : undefined,
     };
     const episodesWithMerged = episodes.filter(ep => {
-      const url = ep.mergedVideoUrl || (ep as any).merged_video_url;
-      return url && typeof url === 'string' && url.trim().length > 10;
+      const url = epMergedVideoUrl(ep);
+      return url && url.trim().length > 10;
     }).length;
-    const eligibleForMerge = episodes.filter(ep => ep.storyboards && ep.storyboards.some(sb => sb.videoUrl || (sb as any).video_url)).length;
+    const eligibleForMerge = episodes.filter(ep => ep.storyboards && ep.storyboards.some(sb => !!sbVideoUrl(sb))).length;
     const mergeDiag: HealthDiagnostic = {
       label: '视频合并', count: episodesWithMerged, total: eligibleForMerge,
       severity: eligibleForMerge === 0 ? 'warn' : episodesWithMerged === eligibleForMerge ? 'ok' : episodesWithMerged === 0 ? 'error' : 'warn',
@@ -179,7 +180,8 @@ export function SeriesFixTool({ seriesId, onFixed }: { seriesId: string; onFixed
   const handleDiagnose = async () => {
     setIsDiagnosing(true); setDiagnosis(null);
     const result = await apiPost(`/series/${seriesId}/diagnose`);
-    if (result.success && (result as any).diagnosis) { setDiagnosis((result as any).diagnosis); if ((result as any).diagnosis.issues.length === 0) toast.success('未检测到问题，数据完整！'); else toast.warning(`检测到 ${(result as any).diagnosis.issues.length} 个问题`); }
+    const diag = (result as Record<string, any>).diagnosis;
+    if (result.success && diag) { setDiagnosis(diag); if (diag.issues.length === 0) toast.success('未检测到问题，数据完整！'); else toast.warning(`检测到 ${diag.issues.length} 个问题`); }
     else toast.error('诊断失败：' + (result.error || '未知错误'));
     setIsDiagnosing(false);
   };
