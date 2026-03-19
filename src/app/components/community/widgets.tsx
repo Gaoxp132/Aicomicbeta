@@ -22,7 +22,7 @@ export type CategoryType = 'all' | 'series' | 'anime' | 'cyberpunk' | 'fantasy' 
 
 const categories = [
   { id: 'all' as const, name: '全部', icon: Users },
-  { id: 'series' as const, name: '漫剧列', icon: Film },
+  { id: 'series' as const, name: '影视系列', icon: Film },
   { id: 'anime' as const, name: '日系动漫', icon: Users },
   { id: 'cyberpunk' as const, name: '赛博朋克', icon: Users },
   { id: 'fantasy' as const, name: '奇幻魔法', icon: Users },

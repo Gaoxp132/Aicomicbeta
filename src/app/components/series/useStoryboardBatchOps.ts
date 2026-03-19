@@ -20,8 +20,8 @@ interface UseStoryboardBatchOpsOpts {
   persistNewStoryboard: (tempId: string, sb: Storyboard) => void;
   persistSortOrder: (sbs: Storyboard[]) => void;
   persistDeleteAndReorder: (ids: string[], remaining: Storyboard[]) => void;
-  patchStoryboardStatus: (id: string, status: string, extra?: any) => void;
-  showConfirm: (opts: any) => Promise<boolean>;
+  patchStoryboardStatus: (id: string, status: string, extra?: Record<string, unknown>) => void;
+  showConfirm: (opts: { title: string; description?: string; confirmText?: string; variant?: string }) => Promise<boolean>;
   handleRegenerateVideo: (sb: Storyboard, skipConfirm?: boolean) => Promise<void>;
 }
 
@@ -66,7 +66,7 @@ export function useStoryboardBatchOps(opts: UseStoryboardBatchOpsOpts) {
       return { ...sb, description: orig.description || sb.description, dialogue: orig.dialogue ?? sb.dialogue };
     }));
     for (const [id, orig] of snapshots) {
-      const patchBody: any = {};
+      const patchBody: Record<string, unknown> = {};
       if (orig.description) patchBody.description = orig.description;
       if (orig.dialogue !== undefined) patchBody.dialogue = orig.dialogue;
       if (Object.keys(patchBody).length > 0) {
@@ -239,7 +239,7 @@ export function useStoryboardBatchOps(opts: UseStoryboardBatchOpsOpts) {
             return { ...s, ...upd };
           }));
           if (polished.description || polished.dialogue) {
-            const patchBody: any = { episodeNumber: episode.episodeNumber, sceneNumber: sb.sceneNumber };
+            const patchBody: Record<string, unknown> = { episodeNumber: episode.episodeNumber, sceneNumber: sb.sceneNumber };
             if (polished.description) patchBody.description = polished.description;
             if (polished.dialogue) patchBody.dialogue = polished.dialogue;
             apiRequest(`/series/${seriesId}/storyboards/${sb.id}`, {

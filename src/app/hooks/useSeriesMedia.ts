@@ -8,19 +8,19 @@ import { toast } from 'sonner';
 import { apiGet, apiPost, apiRequest, isEdgeFunctionReachable } from '../utils';
 import { getErrorMessage } from '../utils';
 import { STYLE_THUMBNAILS } from '../constants';
+import type { Series, Comic } from '../types';
 import { getUserSeries, pollSeriesProgress } from '../services';
 import * as volcengine from '../services';
 import { CancelledTaskError } from '../services';
 import { publishToCommunity } from '../services';
 import { useCachedData } from './index';
-import type { Comic } from '../types/index';
 
 // ═══════════════════════════════════════════════════════════════════
 // [4] useSeries
 // ═══════════════════════════════════════════════════════════════════
 
 export function useSeries(userPhone?: string) {
-  const [series, setSeries] = useState<any[]>([]);
+  const [series, setSeries] = useState<Series[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasLoadedRef = useRef(false);
@@ -59,8 +59,8 @@ export function useSeries(userPhone?: string) {
     return () => { cancelFunctions.forEach(cancel => cancel()); };
   }, [generatingIds, userPhone]);
 
-  const addSeries = useCallback((newSeries: any) => { setSeries(prev => { const a = Array.isArray(prev) ? prev : []; return [newSeries, ...a]; }); }, []);
-  const updateSeriesLocal = useCallback((updatedSeries: any) => { setSeries(prev => { const a = Array.isArray(prev) ? prev : []; return a.map(s => s.id === updatedSeries.id ? updatedSeries : s); }); }, []);
+  const addSeries = useCallback((newSeries: Series) => { setSeries(prev => { const a = Array.isArray(prev) ? prev : []; return [newSeries, ...a]; }); }, []);
+  const updateSeriesLocal = useCallback((updatedSeries: Series) => { setSeries(prev => { const a = Array.isArray(prev) ? prev : []; return a.map(s => s.id === updatedSeries.id ? updatedSeries : s); }); }, []);
   const removeSeriesLocal = useCallback((seriesId: string) => { setSeries(prev => { const a = Array.isArray(prev) ? prev : []; return a.filter(s => s.id !== seriesId); }); }, []);
 
   return { series, isLoading, error, addSeries, updateSeriesLocal, removeSeriesLocal, loadSeries, refresh: refreshFromAPI };
@@ -91,10 +91,10 @@ export function useTaskRecovery(userPhone: string | null) {
         if (!result.success || !result.tasks) { backoffRef.current = Math.min(backoffRef.current * 2, 120000); scheduleNext(); return; }
         backoffRef.current = 15000;
         const dbTasks = result.tasks;
-        const tasks: Comic[] = dbTasks.map((task: any, idx: number) => {
-          const thumbnail = task.thumbnail || STYLE_THUMBNAILS[task.style as keyof typeof STYLE_THUMBNAILS] || STYLE_THUMBNAILS.anime;
-          const videoUrl = task.videoUrl || task.video_url || '';
-          const taskIdVal = task.taskId || task.task_id || '';
+        const tasks: Comic[] = dbTasks.map((task: Record<string, unknown>, idx: number) => {
+          const thumbnail = (task.thumbnail as string) || STYLE_THUMBNAILS[task.style as keyof typeof STYLE_THUMBNAILS] || STYLE_THUMBNAILS.anime;
+          const videoUrl = (task.videoUrl as string) || (task.video_url as string) || '';
+          const taskIdVal = (task.taskId as string) || (task.task_id as string) || '';
           const metadata = task.generationMetadata || task.generation_metadata || null;
           let extractedSeriesId = '';
           if (metadata) { try { const meta = typeof metadata === 'string' ? JSON.parse(metadata) : metadata; extractedSeriesId = meta.seriesId || meta.series_id || ''; } catch {} }
@@ -164,7 +164,7 @@ export function useTaskRecovery(userPhone: string | null) {
   return { recoveredTasks, isRecovering, setRecoveredTasks, forceRefresh, removeTasksForSeries };
 }
 
-// ═══════════════════════════════════════════════════��═══════════════
+// ══════════════════════════════════════════════════════════════════
 // [6] useVideoGeneration
 // ═══════════════════════════════════════════════════════════════════
 
@@ -222,7 +222,7 @@ export function useVideoGeneration(userPhone: string) {
             const transferResult = await apiPost('/video/transfer', { taskId, volcengineUrl: finalStatus.videoUrl });
             let finalVideoUrl = finalStatus.videoUrl;
             if (transferResult.success && transferResult.data?.ossUrl) {
-              finalVideoUrl = transferResult.data.ossUrl;
+              finalVideoUrl = String(transferResult.data.ossUrl);
               setComics(prev => prev.map(c => (c.taskId === taskId || c.id === taskId) ? { ...c, videoUrl: finalVideoUrl } : c));
             } else { console.warn('[Video Generation] Video transfer failed, using original URL:', transferResult.error); }
             await publishToCommunity({ phone: userPhone, taskId, title: newComic.title, prompt: newComic.prompt, style: newComic.style, duration: newComic.duration, thumbnail: newComic.thumbnail, videoUrl: finalVideoUrl });

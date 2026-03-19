@@ -88,7 +88,7 @@ export function LoginDialog({ isOpen, onClose, onLoginSuccess }: LoginDialogProp
                 开始你的创作之旅
               </h2>
               <p className="text-gray-400 text-center mb-8 text-sm">
-                输入手机号即可登录，AI将帮你创作专属漫剧
+                输入手机号即可登录，AI将帮你创作专属影视作品
               </p>
 
               {/* 手机号输入 */}

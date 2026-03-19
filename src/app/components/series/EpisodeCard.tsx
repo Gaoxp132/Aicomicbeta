@@ -5,7 +5,7 @@ import { Play, Edit, Calendar, ChevronDown, ChevronUp, Film, Clock, AlertTriangl
 import { VideoPlayer } from '../VideoPlayer';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Episode } from '../../types';
-import { formatDuration, getAspectCssValue, epMergedVideoUrl } from '../../utils';
+import { formatDuration, getAspectCssValue, epMergedVideoUrl, getEffectiveEpisodeStatus } from '../../utils';
 
 // ── Inline: VideoErrorFallback (was ../VideoErrorFallback.tsx) ───
 function VideoErrorFallback({ episode, error, onRepair }: {
@@ -56,13 +56,13 @@ interface EpisodeCardProps {
   episode: Episode;
   isVideoExpanded: boolean;
   isCurrentlyPlaying: boolean;
-  videoError: any | null;
+  videoError: Record<string, unknown> | null;
   aspectRatio?: string; // v6.0.82: 画面比例
   onSelect: () => void;
   onToggleVideoExpand: () => void;
   onCollapseVideo: () => void;
   onSetPlaying: (id: string | null) => void;
-  onVideoError: (episodeId: string, errorInfo: any) => void;
+  onVideoError: (episodeId: string, errorInfo: Record<string, unknown>) => void;
   onVideoLoaded: (episodeId: string) => void;
   onRepair: (episodeId: string) => Promise<void>;
 }
@@ -85,6 +85,9 @@ export const EpisodeCard = memo(function EpisodeCard({
   const mergedVideoUrl = epMergedVideoUrl(episode);
   const hasValidMergedVideo = mergedVideoUrl && typeof mergedVideoUrl === 'string' && mergedVideoUrl.trim().length > 0;
 
+  // 智能推断实际状态
+  const effectiveStatus = getEffectiveEpisodeStatus(episode);
+
   return (
     <motion.div
       whileHover={{ x: 4 }}
@@ -105,13 +108,13 @@ export const EpisodeCard = memo(function EpisodeCard({
             </h3>
             <div className="flex items-center gap-2 shrink-0">
               <span className={`px-2 sm:px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap ${
-                episode.status === 'completed'
+                effectiveStatus === 'completed'
                   ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                  : episode.status === 'generating'
+                  : effectiveStatus === 'generating'
                   ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                   : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
               }`}>
-                {episode.status === 'completed' ? '已完成' : episode.status === 'generating' ? '生成中' : '草稿'}
+                {effectiveStatus === 'completed' ? '已完成' : effectiveStatus === 'generating' ? '生成中' : '草稿'}
               </span>
               <Button
                 size="sm"

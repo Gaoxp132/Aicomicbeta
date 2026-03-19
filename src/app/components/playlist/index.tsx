@@ -15,7 +15,7 @@ import { getErrorMessage } from '../../utils';
 // ── Inline: VideoUrlDiagnostic (was ../VideoUrlDiagnostic.tsx) ───
 function VideoUrlDiagnostic({ url, onClose }: { url: string; onClose?: () => void }) {
   const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const runDiagnostic = async () => {
     setTesting(true); setResult(null);
     const res = await apiGet(`/diagnostic/video-url?url=${encodeURIComponent(url)}`);
@@ -243,8 +243,8 @@ interface PlaylistErrorViewProps {
 
 export function PlaylistErrorView({ error, playlist, currentVideo, className, onLoadingChange }: PlaylistErrorViewProps) {
   const [showDiagnostic, setShowDiagnostic] = useState(false);
-  const [diagnosticResult, setDiagnosticResult] = useState<any>(null);
-  const [fixResult, setFixResult] = useState<any>(null);
+  const [diagnosticResult, setDiagnosticResult] = useState<Record<string, unknown> | null>(null);
+  const [fixResult, setFixResult] = useState<Record<string, unknown> | null>(null);
 
   const handleDiagnose = async () => {
     if (!playlist) return; onLoadingChange(true);
@@ -331,7 +331,7 @@ export function PlaylistErrorView({ error, playlist, currentVideo, className, on
 
 // ═══════════════════════════════════════════════════════════════════
 // [C] PlaylistOverlays (was: PlaylistOverlays.tsx)
-// ═══════════════════════════════════════════════════════════���═══════
+// ══════════════════════════════════════════════════════════════════
 
 interface PlaylistOverlaysProps {
   playlist: Playlist; currentIndex: number; isPlaying: boolean; isVideoLoading: boolean; isBuffering: boolean;

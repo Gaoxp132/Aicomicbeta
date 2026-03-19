@@ -62,12 +62,12 @@ export function useViewerKeyboard({ showShortcutHelp, setShowShortcutHelp, showS
 export function useSeriesViewerInteractions({
   series, userPhone, currentEpisodeIndex, episodes, currentTime, duration, setIsPlaying, setCurrentTime,
 }: {
-  series: CommunitySeriesWork; userPhone?: string; currentEpisodeIndex: number; episodes: any[];
+  series: CommunitySeriesWork; userPhone?: string; currentEpisodeIndex: number; episodes: { id: string; episodeNumber: number; title: string; mergedVideoUrl?: string; videoUrl?: string }[];
   currentTime: number; duration: number; setIsPlaying: (v: boolean) => void; setCurrentTime: (v: number) => void;
 }) {
   const [isLiked, setIsLiked] = useState(series.isLiked || false);
   const [likes, setLikes] = useState(series.likes || 0);
-  const [comments, setComments] = useState<any[]>([]);
+  const [comments, setComments] = useState<Record<string, unknown>[]>([]);
   const [commentText, setCommentText] = useState('');
   const [showComments, setShowComments] = useState(false);
   const [isLoadingComments, setIsLoadingComments] = useState(false);
@@ -129,7 +129,7 @@ export function useSeriesViewerInteractions({
 
   const handleShare = async () => {
     const epInfo = currentEpisode ? ` 第${currentEpisode.episodeNumber}集` : '';
-    const result = await shareContent({ title: series.title || 'AI漫剧', text: `${series.title}${epInfo} - 快来看看这部AI漫剧!`, url: window.location.href });
+    const result = await shareContent({ title: series.title || 'AI影视作品', text: `${series.title}${epInfo} - 快来看看这部AI创作的作品!`, url: window.location.href });
     if (result === 'shared') toast.success('分享成功');
     else if (result === 'copied') toast.success('链接已复制到剪贴板');
     else if (result === 'cancelled') { /* silent */ }

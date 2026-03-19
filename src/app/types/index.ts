@@ -5,10 +5,10 @@
 // 基础类型
 export type TaskStatus = 'generating' | 'completed' | 'failed';
 
-// v6.0.36: 作品类型（从漫剧扩展到全品类影视）
-export type ProductionType = 'comic_drama' | 'short_drama' | 'micro_film' | 'movie' | 'tv_series' | 'documentary' | 'music_video' | 'advertisement';
+// v6.0.36: 作品类型（全品类影视）
+export type ProductionType = 'comic_drama' | 'short_drama' | 'micro_film' | 'movie' | 'tv_series' | 'documentary' | 'music_video' | 'advertisement' | 'brand_promo' | 'product_promo';
 
-// 漫剧作品
+// 影视作品
 export interface Comic {
   id: string;
   title: string;
@@ -27,15 +27,15 @@ export interface Comic {
   enableAudio?: boolean;
   model?: string;
   userPhone?: string;
-  metadata?: any; // v6.0.6: generation_metadata from backend
+  metadata?: Record<string, unknown> | null; // v6.0.6: generation_metadata from backend
   seriesId?: string; // v6.0.6: extracted from metadata for task cleanup on series deletion
   error?: string; // 后端返回的错误信息（status=failed时）
 }
 
-// 社区漫剧系列作品
+// 社区影视系列作品
 export interface CommunitySeriesWork {
   id: string; // series ID
-  type: 'series'; // 标识这是漫剧系列
+  type: 'series'; // 标识这是影视系列
   user_phone: string;
   user_nickname?: string;
   title: string;
@@ -44,7 +44,7 @@ export interface CommunitySeriesWork {
   style: string;
   coverImage?: string;
   totalEpisodes: number;
-  completedEpisodes: number; // 已���成的集数
+  completedEpisodes: number; // 已成的集数
   episodes: {
     id: string;
     episodeNumber: number;
@@ -75,14 +75,14 @@ export interface CommunitySeriesWork {
 }
 
 // API响应
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
   message?: string;
 }
 
-// ==================== 漫剧创作系统类型 ====================
+// ==================== 影视创作系统类型 ====================
 
 // 角色定义
 export interface Character {
@@ -148,7 +148,7 @@ export interface Episode {
   updatedAt: Date | string;
 }
 
-// 剧集系列（完整的漫剧作品）
+// 剧集系列（完整的影视作品）
 export interface Series {
   id: string;
   title: string;
@@ -233,7 +233,7 @@ export interface Chapter {
   updatedAt: Date | string;
 }
 
-// 漫剧创作表单数据
+// 影视创作表单数据
 export interface SeriesFormData {
   title: string;
   description: string;
@@ -248,4 +248,22 @@ export interface SeriesFormData {
   isPublic?: boolean; // v6.0.70: 是否发布到社区（默认true）
   resolution?: string; // v6.0.78: 视频分辨率（720p/1080p/480p）
   aspectRatio?: string; // v6.0.79: 视频比例（16:9/9:16/1:1/4:3/3:4）
+  // v6.0.90: 品牌/产品宣传片专属字段
+  brandName?: string; // 品牌/产品名称
+  slogan?: string; // 广告语/口号
+  sellingPoints?: string[]; // 核心卖点
+  promoTone?: string; // 宣传调性（luxury/tech/warm/energetic/minimal/cinematic）
+  callToAction?: string; // 行动号召（如"立即购买"、"预约体验"等）
+  // v6.0.192: 多素材上传（图片+视频），AI创作时自动参考
+  referenceAssets?: ReferenceAsset[];
+}
+
+// v6.0.192: 用户上传的参考素材（图片/视频）
+export interface ReferenceAsset {
+  url: string;           // OSS URL
+  type: 'image' | 'video'; // 素材类型
+  name: string;          // 原始文件名
+  size: number;          // 文件大小(bytes)
+  thumbnailUrl?: string; // 视频缩略图URL
+  tag?: 'logo' | 'product' | 'scene' | 'general'; // 素材标签（logo保持原形象）
 }

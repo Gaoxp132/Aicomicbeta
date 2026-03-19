@@ -23,9 +23,10 @@ import * as services from '../../services';
 import { apiRequest } from '../../utils';
 import { sbVideoUrl } from '../../utils';
 import { emitQuotaExceeded } from '../../utils/events';
-import { QuotaExceededError, PollingTimeoutError, isPollingTimeoutError, getPollingTimeoutTaskId } from '../../services/volcengine';
+import { QuotaExceededError, isPollingTimeoutError, getPollingTimeoutTaskId } from '../../services/volcengine';
 import type { ConfirmOptions } from './ConfirmDialog';
 import { getErrorMessage } from '../../utils';
+import { extractAndUploadLastFrame } from '../../utils/videoLastFrame';
 
 interface UseStoryboardBatchGenerationOptions {
   seriesId: string;
@@ -196,6 +197,15 @@ export function useStoryboardBatchGeneration({
             sceneNumber: sb.sceneNumber,
           }),
         });
+
+        // v6.0.201: 等待尾帧提取完成（最多10s），确保下一场景能获���到参考图
+        // 不再fire-and-forget，因为串行生成依赖前序场景的尾帧
+        try {
+          await Promise.race([
+            extractAndUploadLastFrame(videoUrl, seriesId, sb.id),
+            new Promise(resolve => setTimeout(resolve, 10000)), // 10s timeout
+          ]);
+        } catch { /* non-blocking */ }
 
         completed++;
         consecutiveNetworkFails = 0;

@@ -16,6 +16,7 @@ import {
 import { Button } from '../ui';
 import * as communityAPI from '../../services';
 import { apiDelete } from '../../utils';
+import type { RawWork } from '../../utils';
 import { retryVideo } from '../../services';
 import type { Comic } from '../../types/index';
 import type { VideoQuotaInfo } from '../../hooks/useVideoQuota';
@@ -109,7 +110,7 @@ export function ProfileStats({ totalWorks, totalLikes, totalViews }: ProfileStat
 // [C] ProfileWorkItem (was: ProfileWorkItem.tsx)
 // ═══════════════════════════════════════════════════════════════════
 
-interface ProfileWorkItemProps { work: any; onPlay: () => void; onRefresh: () => void; }
+interface ProfileWorkItemProps { work: RawWork; onPlay: () => void; onRefresh: () => void; }
 
 export function ProfileWorkItem({ work, onPlay, onRefresh }: ProfileWorkItemProps) {
   const [isDeleting, setIsDeleting] = useState(false);
@@ -169,7 +170,7 @@ export function ProfileWorkItem({ work, onPlay, onRefresh }: ProfileWorkItemProp
       <div className="flex items-center gap-3 sm:gap-4">
         <div className="relative w-16 h-16 sm:w-24 sm:h-24 rounded-lg bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center overflow-hidden flex-shrink-0">
           {(work.coverImage || work.thumbnail) ? (<img src={work.coverImage || work.thumbnail} alt={work.title} className="w-full h-full object-cover" loading="lazy" />) : work.type === 'series' ? (<Film className="w-6 h-6 sm:w-8 sm:h-8 text-purple-400/60" />) : (<Play className="w-6 h-6 sm:w-8 sm:h-8 text-white/40" />)}
-          {work.type === 'series' && (<div className="absolute top-0.5 left-0.5 sm:top-1 sm:left-1 px-1 sm:px-1.5 py-0.5 bg-purple-500/80 rounded text-[8px] sm:text-[10px] text-white font-medium">漫剧</div>)}
+          {work.type === 'series' && (<div className="absolute top-0.5 left-0.5 sm:top-1 sm:left-1 px-1 sm:px-1.5 py-0.5 bg-purple-500/80 rounded text-[8px] sm:text-[10px] text-white font-medium">系列</div>)}
           {work.type !== 'series' && work.status === 'completed' && (<div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><Play className="w-6 h-6 sm:w-8 sm:h-8 text-white" /></div>)}
         </div>
         <div className="flex-1 min-w-0">
@@ -196,8 +197,8 @@ export function ProfileWorkItem({ work, onPlay, onRefresh }: ProfileWorkItemProp
 // ═══════════════════════════════════════════════════════════════════
 
 interface ProfileWorksListProps {
-  works: any[]; isLoading: boolean; hasMore: boolean; isLoadingMore: boolean; isOffline?: boolean;
-  onSelectWork: (work: any, worksList?: any[]) => void; onLoadMore: () => void; onRefresh: () => void;
+  works: RawWork[]; isLoading: boolean; hasMore: boolean; isLoadingMore: boolean; isOffline?: boolean;
+  onSelectWork: (work: RawWork, worksList?: RawWork[]) => void; onLoadMore: () => void; onRefresh: () => void;
 }
 
 export function ProfileWorksList({ works, isLoading, hasMore, isLoadingMore, isOffline = false, onSelectWork, onLoadMore, onRefresh }: ProfileWorksListProps) {
@@ -219,7 +220,7 @@ export function ProfileWorksList({ works, isLoading, hasMore, isLoadingMore, isO
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-20">
         <div className="w-24 h-24 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-4"><motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}><RefreshCw className="w-12 h-12 text-white/20" /></motion.div></div>
-        <p className="text-white/40 text-lg">还没有创作任何作品</p><p className="text-white/30 text-sm mt-2">快去创作你的第一部漫剧吧！</p>
+        <p className="text-white/40 text-lg">还没有创作任何作品</p><p className="text-white/30 text-sm mt-2">快去创作你的第一部影视作品吧！</p>
       </motion.div>
     );
   }

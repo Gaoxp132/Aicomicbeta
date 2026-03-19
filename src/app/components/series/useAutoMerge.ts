@@ -86,7 +86,7 @@ export function useAutoMerge({
         body: JSON.stringify({ userPhone, episodeNumber: episode.episodeNumber }),
       });
       if (!tokenResp.ok) {
-        const tokenErr = await tokenResp.json().catch(() => ({})) as Record<string, any>;
+        const tokenErr = await tokenResp.json().catch(() => ({})) as Record<string, unknown>;
         throw new Error(`获取上传令牌失败: ${tokenErr.error || tokenResp.status}`);
       }
       const tokenData = await tokenResp.json();
@@ -153,7 +153,7 @@ export function useAutoMerge({
         body: JSON.stringify({ ossUrl: finalOssUrl, sizeMB, userPhone }),
       });
       if (!saveResp.ok) {
-        const saveErr = await saveResp.json().catch(() => ({})) as Record<string, any>;
+        const saveErr = await saveResp.json().catch(() => ({})) as Record<string, unknown>;
         throw new Error(`保存视频URL到数据库失败: ${saveErr.error || saveResp.status}`);
       }
 

@@ -77,7 +77,7 @@ export async function createVideoTask(params: {
     ...params,
     codec: 'h265', // getVideoCodecPreference始终返回'h265'
   };
-  const result = await apiPost('/volcengine/generate', paramsWithCodec, { timeout: 150000 });
+  const result = await apiPost('/volcengine/generate', paramsWithCodec, { timeout: 120000 });
   if (!result.success) {
     const errorMsg = result.error || '创建任务失败';
     // v6.0.96: 解析配额超限错误 (HTTP 429 + quotaExceeded flag)
@@ -146,7 +146,7 @@ export async function pollTaskStatus(
   let attempts = 0;
   let consecutiveErrors = 0;
   const maxConsecutiveErrors = 12;
-  // v6.0.183: 错误导致的间隔膨胀独立于自��应间隔
+  // v6.0.183: 错误导致的间隔膨胀独立于自应间隔
   let errorIntervalBonus = 0;
 
   /** v6.0.183: 根据轮询次数计算自适应间隔 — 越往后间隔越长，覆盖更多时间 */

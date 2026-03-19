@@ -7,19 +7,8 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import type { Series, SeriesFormData } from '../../types';
 import * as services from '../../services';
-import { apiPost } from '../../utils';
-import { STYLES } from '../../constants';
-
-const GENRES = [
-  { id: 'romance', name: '爱情' },
-  { id: 'suspense', name: '悬疑' },
-  { id: 'comedy', name: '喜剧' },
-  { id: 'action', name: '动作' },
-  { id: 'fantasy', name: '奇幻' },
-  { id: 'horror', name: '恐怖' },
-  { id: 'scifi', name: '科幻' },
-  { id: 'drama', name: '剧情' },
-];
+import { apiPost, getErrorMessage } from '../../utils';
+import { STYLES, GENRES } from '../../constants';
 
 interface UseWizardAIOptions {
   formData: SeriesFormData;
@@ -47,17 +36,17 @@ export function useWizardAI({ formData, setFormData, userPhone, onComplete }: Us
       const aiData = result.data || result;
 
       if (aiData.title) {
-        setFormData(prev => ({ ...prev, title: aiData.title }));
+        setFormData(prev => ({ ...prev, title: String(aiData.title) }));
       }
       if (aiData.description) {
-        setFormData(prev => ({ ...prev, description: aiData.description }));
+        setFormData(prev => ({ ...prev, description: String(aiData.description) }));
       }
 
       if (aiData.title && aiData.description) {
         const isFallback = result.fallback ? ' (使用默认方案)' : '';
         toast.success(`AI生成成功！${isFallback}已自动填充标题和简介。`);
       } else {
-        toast.warning('AI生成部分成功，请检查并手补充缺失的字段。');
+        toast.warning('AI生成部分成功，请检查并手动补充缺失的字段。');
       }
     } else {
       const errorMsg = result.error || '未知错误';
@@ -107,19 +96,20 @@ export function useWizardAI({ formData, setFormData, userPhone, onComplete }: Us
       const aiData = result.data || result;
 
       if (aiData.outline) {
-        setFormData(prev => ({ ...prev, storyOutline: aiData.outline }));
+        setFormData(prev => ({ ...prev, storyOutline: String(aiData.outline) }));
 
         const mode = formData.storyOutline ? '扩展完善' : '生成';
         const fallbackNote = result.fallback ? ' (使用默认模板)' : '';
         toast.success(`AI${mode}大纲成功！${fallbackNote}已自动填充，请检查后继续。`);
       } else if (aiData.mainPlot && aiData.episodes) {
-        const outlineText = `【故事主线】\n${aiData.mainPlot}\n\n${aiData.growthTheme ? `【成长主题】\n${aiData.growthTheme}\n\n` : ''}【分集大纲】\n${aiData.episodes.map((ep: any) => `第${ep.episodeNumber}集 - ${ep.title}\n${ep.synopsis}\n主题：${ep.theme || '未指定'}`).join('\n\n')}`;
+        const episodes = aiData.episodes as Array<{ episodeNumber: number; title: string; synopsis: string; theme?: string }>;
+        const outlineText = `【故事主线】\n${String(aiData.mainPlot)}\n\n${aiData.growthTheme ? `【成长主题】\n${String(aiData.growthTheme)}\n\n` : ''}【分集大纲】\n${episodes.map((ep) => `第${ep.episodeNumber}集 - ${ep.title}\n${ep.synopsis}\n主题：${ep.theme || '未指定'}`).join('\n\n')}`;
 
         setFormData(prev => ({ ...prev, storyOutline: outlineText }));
 
         const mode = formData.storyOutline ? '扩展完善' : '生成';
         const fallbackNote = result.fallback ? ' (使用默认模板)' : '';
-        toast.success(`AI${mode}大纲成功！${fallbackNote}已填充${aiData.episodes.length}集大纲，请检查后继续。`);
+        toast.success(`AI${mode}大纲成功！${fallbackNote}已填充${episodes.length}集大纲，请检查后继续。`);
       } else {
         console.error('[WizardAI] No outline in response:', aiData);
         toast.error('AI生成的内容格式异常，请重试或手动输入。');
@@ -149,7 +139,7 @@ export function useWizardAI({ formData, setFormData, userPhone, onComplete }: Us
       const createResult = await services.createSeries(formData, userPhone);
 
       if (!createResult.success || !createResult.data) {
-        const errMsg = createResult.error || '创建漫剧失败';
+        const errMsg = createResult.error || '创建作品失败';
         if (errMsg.includes('Edge Function') || errMsg.includes('Failed to fetch') || errMsg.includes('未连接')) {
           toast.error('服务器暂时不可用，请稍后重试。如持续出现，请检查网络连接。');
         } else {
@@ -163,7 +153,7 @@ export function useWizardAI({ formData, setFormData, userPhone, onComplete }: Us
 
       setIsAnalyzing(false);
 
-      toast.success('漫剧创建成功！AI正在后台生成剧集和分镜，页面会自动更新。');
+      toast.success('作品创建成功！AI正在后台生成剧集和分镜，页面会自动更新。');
 
       onComplete(newSeries);
     } catch (error: unknown) {

@@ -25,6 +25,7 @@ export interface ConcatResult {
   videoCount: number;
   totalSamples: number;
   excludedSegments?: number; // v6.0.108: segments excluded due to resolution mismatch
+  resolutionMismatch?: { resolutions: Map<string, number[]> }; // v6.0.194: segment indices per resolution
 }
 
 // ==================== Box Building ====================
@@ -210,6 +211,8 @@ export function concatMP4(segments: Uint8Array[]): ConcatResult {
 
   console.log(`[MP4Concat:Client] Concatenating ${segments.length} segments...`);
 
+  let _resolutionMismatch: ConcatResult['resolutionMismatch'] = undefined;
+
   interface SegmentInfo {
     buf: Uint8Array;
     ftypBox: Box;
@@ -258,6 +261,7 @@ export function concatMP4(segments: Uint8Array[]): ConcatResult {
         details.push(`${key}: 段[${indices.map(i => i + 1).join(',')}]`);
       }
       console.warn(`[MP4Concat:Client] ⚠️ 分辨率不一致（共 ${resVotes.size} 种），全部保留合并: ${details.join('; ')}`);
+      _resolutionMismatch = { resolutions: resVotes };
     }
   }
 
@@ -422,5 +426,5 @@ export function concatMP4(segments: Uint8Array[]): ConcatResult {
   const durationSec = movieTimescale > 0 ? movieDuration / movieTimescale : 0;
   console.log(`[MP4Concat:Client] Output: ${(result.length / 1024 / 1024).toFixed(2)}MB, ${durationSec.toFixed(1)}s, ${totalSamples} samples`);
 
-  return { data: result, duration: durationSec, videoCount: segInfos.length, totalSamples };
+  return { data: result, duration: durationSec, videoCount: segInfos.length, totalSamples, resolutionMismatch: _resolutionMismatch };
 }

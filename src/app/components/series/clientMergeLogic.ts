@@ -104,24 +104,26 @@ export async function clientMergeEpisode(
           }),
         });
         if (refreshResp.ok) {
-          const refreshJson = await refreshResp.json();
-          const results: any[] = refreshJson.data?.results || [];
+          const refreshJson = await refreshResp.json() as Record<string, unknown>;
+          const refreshData = refreshJson.data as Record<string, unknown> | undefined;
+          const results: Record<string, unknown>[] = (refreshData?.results || []) as Record<string, unknown>[];
           let refreshedCount = 0;
           const sourceCounts: Record<string, number> = {};
-          results.forEach((r: any) => {
-            sourceCounts[r.source] = (sourceCounts[r.source] || 0) + 1;
+          results.forEach((r: Record<string, unknown>) => {
+            const source = r.source as string;
+            sourceCounts[source] = (sourceCounts[source] || 0) + 1;
             if (r.freshUrl && r.freshUrl !== r.originalUrl) {
-              freshUrlMap.set(r.originalUrl, r.freshUrl);
+              freshUrlMap.set(r.originalUrl as string, r.freshUrl as string);
               refreshedCount++;
             }
             if (r.presignedGetUrl) {
-              presignedGetUrlMap.set(r.sceneNumber, r.presignedGetUrl);
+              presignedGetUrlMap.set(r.sceneNumber as number, r.presignedGetUrl as string);
             }
             if (r.freshUrl === r.originalUrl) {
               if (r.source === 'expired-irrecoverable') {
-                irrecoverableScenes.add(r.sceneNumber);
+                irrecoverableScenes.add(r.sceneNumber as number);
               } else if (r.source === 'oss-unreachable') {
-                ossUnreachableScenes.add(r.sceneNumber);
+                ossUnreachableScenes.add(r.sceneNumber as number);
               }
             }
           });
@@ -175,17 +177,18 @@ export async function clientMergeEpisode(
             }),
           });
           if (retryResp.ok) {
-            const retryJson = await retryResp.json();
-            const retryResults: any[] = retryJson.data?.results || [];
+            const retryJson = await retryResp.json() as Record<string, unknown>;
+            const retryData = retryJson.data as Record<string, unknown> | undefined;
+            const retryResults: Record<string, unknown>[] = (retryData?.results || []) as Record<string, unknown>[];
             let recoveredCount = 0;
-            retryResults.forEach((r: any) => {
+            retryResults.forEach((r: Record<string, unknown>) => {
               if (r.source !== 'expired-irrecoverable' && r.source !== 'error' && r.source !== 'no-task-id') {
-                irrecoverableScenes.delete(r.sceneNumber);
+                irrecoverableScenes.delete(r.sceneNumber as number);
                 if (r.freshUrl && r.freshUrl !== r.originalUrl) {
-                  freshUrlMap.set(r.originalUrl, r.freshUrl);
+                  freshUrlMap.set(r.originalUrl as string, r.freshUrl as string);
                 }
                 if (r.presignedGetUrl) {
-                  presignedGetUrlMap.set(r.sceneNumber, r.presignedGetUrl);
+                  presignedGetUrlMap.set(r.sceneNumber as number, r.presignedGetUrl as string);
                 }
                 recoveredCount++;
               }
@@ -236,14 +239,17 @@ export async function clientMergeEpisode(
     }
 
     // ── Strategy 1: Proxy-first ──
+    // v6.0.194: OSS-unreachable scenes should STILL use proxy (it's the only viable path
+    // since direct download will CORS-fail). HEAD check timeout ≠ GET download failure.
     const proxyUrl = getApiUrl('/video-proxy');
-    let proxyRetries = ossUnreachableScenes.has(sceneNum) ? 0 : 3;
+    let proxyRetries = 3;
 
     while (proxyRetries >= 0 && !downloaded) {
       try {
+        // v6.0.194: 75s→130s — server-side OSS fetch now takes up to 120s, add 10s overhead
         const resp = await fetchWithTimeout(proxyUrl, {
           method: 'POST',
-          timeoutMs: 75_000,
+          timeoutMs: 130_000,
           headers: {
             'Authorization': `Bearer ${publicAnonKey}`,
             'Content-Type': 'application/json',
@@ -414,10 +420,10 @@ export async function clientMergeEpisode(
 
   console.log(`[ClientMerge] Concatenating ${segments.length} segments using pure-TS MP4 concat...`);
 
-  let result: { data: Uint8Array; duration: number; videoCount: number; totalSamples: number; excludedSegments?: number };
+  let result: { data: Uint8Array; duration: number; videoCount: number; totalSamples: number; excludedSegments?: number; resolutionMismatch?: { resolutions: Map<string, number[]> } };
 
   if (segments.length === 1) {
-    result = { data: segments[0]!, duration: 0, videoCount: 1, totalSamples: 0 };
+    result = { data: segments[0]!, duration: 0, videoCount: 1, totalSamples: 0 } as typeof result;
   } else {
     const BATCH_SIZE = 4;
     if (segments.length <= BATCH_SIZE + 1) {
@@ -458,7 +464,34 @@ export async function clientMergeEpisode(
   const blobUrl = URL.createObjectURL(blob);
   const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
 
-  console.log(`[ClientMerge] Done: ${sizeMB}MB, ${result.videoCount} segments merged (all scenes included, no resolution filtering)`);
+  // v6.0.194: Surface resolution mismatch warning with actionable scene numbers
+  if (result.resolutionMismatch) {
+    const { resolutions } = result.resolutionMismatch;
+    // Find the majority resolution and list minority scenes
+    let majorityRes = '';
+    let majorityCount = 0;
+    const mismatchedSceneNums: number[] = [];
+    for (const [res, indices] of resolutions) {
+      if (indices.length > majorityCount) {
+        // Move previous majority's scenes to mismatched
+        if (majorityRes) {
+          const prevIndices = resolutions.get(majorityRes)!;
+          mismatchedSceneNums.push(...prevIndices.map(idx => segmentsMeta[idx]?.sceneNumber).filter((n): n is number => n != null));
+        }
+        majorityRes = res;
+        majorityCount = indices.length;
+      } else {
+        mismatchedSceneNums.push(...indices.map(idx => segmentsMeta[idx]?.sceneNumber).filter((n): n is number => n != null));
+      }
+    }
+    if (mismatchedSceneNums.length > 0) {
+      const warnMsg = `视频已合并，但场景 ${mismatchedSceneNums.join(', ')} 的分辨率与其他分镜不同（多数为 ${majorityRes}），播放时可能有画面尺寸跳变。建议对这些场景重新生成视频以统一分辨率。`;
+      warnings.push(warnMsg);
+      console.warn(`[ClientMerge] Resolution mismatch: majority=${majorityRes}, mismatched scenes=[${mismatchedSceneNums.join(',')}]`);
+    }
+  }
+
+  console.log(`[ClientMerge] Done: ${sizeMB}MB, ${result.videoCount} segments merged`);
 
   return { blobUrl, sizeMB, warnings, excludedScenes: excludedSceneNums, majorityResolution: resolvedMajorityKey };
 }

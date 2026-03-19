@@ -261,11 +261,11 @@ function TaskItem({ task, onClick, onTaskCancelled }: TaskItemProps) {
       try {
         const metadata = typeof task.metadata === 'string' ? JSON.parse(task.metadata) : task.metadata;
         if (metadata.seriesId) {
-          // v6.0.77: 优先从title提取（格式: "漫剧名-E1-场景1"），避免从enriched prompt中提取到角色锁定指令
+          // v6.0.77: 优先从title提取（格式: "作品名-E1-场景1"），避免从enriched prompt中提取到角色锁定指令
           if (task.title && !task.title.startsWith('漫剧《') && !task.title.includes('角色外貌') && !task.title.includes('【')) {
             return task.title;
           }
-          // 尝试从prompt提取漫剧名（格式: 漫剧《xxx》）
+          // 尝试从prompt提取作品名（格式: 漫剧《xxx》— 兼容旧数据）
           const seriesMatch = task.prompt?.match(/漫剧《(.+?)》/);
           if (seriesMatch) {
             const epNum = metadata.episodeNumber || '?';

@@ -35,7 +35,7 @@ export function useSeriesEditorActions(
     if (confirmFn) {
       const confirmed = await confirmFn({
         title: '批量生成视频',
-        description: '确���要为整部漫剧生成所有视吗？这将为所有分镜生成视频，可能需要较长时间。',
+        description: '确定要为整部作品生成所有视频吗？这将为所有分镜生成视频，可能需要较长时间。',
         confirmText: '开始生成',
         cancelText: '取消',
         variant: 'warning',

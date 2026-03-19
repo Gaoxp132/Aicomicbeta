@@ -43,7 +43,7 @@ export function SeriesViewer({ series, userPhone, onClose, onNavigateToSeries }:
   });
   const [showEpisodeList, setShowEpisodeList] = useState(false);
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
-  const [similarSeries, setSimilarSeries] = useState<any[]>([]);
+  const [similarSeries, setSimilarSeries] = useState<Record<string, unknown>[]>([]);
   const [isLoadingSimilar, setIsLoadingSimilar] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -51,7 +51,7 @@ export function SeriesViewer({ series, userPhone, onClose, onNavigateToSeries }:
 
   const currentEpisode = episodes[currentEpisodeIndex];
 
-  const getEpisodeVideoUrl = (episode: any) => {
+  const getEpisodeVideoUrl = (episode: { mergedVideoUrl?: string; videoUrl?: string; episodeNumber?: number }) => {
     if (episode?.mergedVideoUrl) return episode.mergedVideoUrl;
     if (episode?.videoUrl) return episode.videoUrl;
     console.warn('[SeriesViewer] No video URL found for episode:', episode?.episodeNumber);

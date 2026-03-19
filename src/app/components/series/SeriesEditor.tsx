@@ -14,6 +14,7 @@ import {
   Lock,
   Monitor,
   Film,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '../ui';
 import { EpisodeManager } from './EpisodeManager';
@@ -32,7 +33,7 @@ import * as seriesService from '../../services';
 import { syncPendingTasks, transferCompletedToOSS } from '../../services';
 import type { Series, Episode, Storyboard, Character, Chapter } from '../../types';
 import { ConfirmDialog, useConfirm } from './ConfirmDialog';
-import { getErrorMessage } from '../../utils';
+import { getErrorMessage, isPromoType, getEffectiveEpisodeStatus } from '../../utils';
 
 interface SeriesEditorProps {
   series: Series;
@@ -65,7 +66,14 @@ export function SeriesEditor({ series, userPhone, onBack, onUpdate }: SeriesEdit
   useEffect(() => {
     if ((series.status === 'failed' || series.status === 'generating') && isGenerationEffectivelyComplete(series)) {
       console.log(`[SeriesEditor] Series ${series.id} has status='${series.status}' but is effectively complete. Auto-correcting to draft.`);
-      const corrected = { ...series, status: 'draft' as const };
+      // 同时修正各 episode 的 status
+      const correctedEpisodes = (series.episodes || []).map(ep => {
+        if (getEffectiveEpisodeStatus(ep) === 'completed' && ep.status !== 'completed') {
+          return { ...ep, status: 'completed' as const };
+        }
+        return ep;
+      });
+      const corrected = { ...series, status: 'draft' as const, episodes: correctedEpisodes };
       setLocalSeries(corrected);
       onUpdate(corrected);
       seriesService.updateSeries(series.id, { status: 'draft' }).then(result => {
@@ -382,7 +390,9 @@ export function SeriesEditor({ series, userPhone, onBack, onUpdate }: SeriesEdit
             }`}
           >
             <Users className="w-4 h-4 shrink-0" />
-            <span className="font-medium text-sm sm:text-base">角色</span>
+            <span className="font-medium text-sm sm:text-base">
+              {isPromoType(localSeries.productionType) ? '出镜元素' : '角色'}
+            </span>
           </button>
         </div>
       </div>
@@ -410,13 +420,25 @@ export function SeriesEditor({ series, userPhone, onBack, onUpdate }: SeriesEdit
           )}
 
           {currentView === 'characters' && (
-            <CharacterManager
-              characters={localSeries.characters || []}
-              seriesId={localSeries.id}
-              userPhone={userPhone}
-              seriesStatus={localSeries.status}
-              onUpdate={handleCharacterUpdate}
-            />
+            <>
+              {isPromoType(localSeries.productionType) && (
+                <div className="mb-4 px-4 py-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-sm flex items-start gap-2">
+                  <Sparkles className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span>
+                    宣传片不一定需要出镜人物。AI 会根据内容自动判断是否需要角色，您也可以手动添加。
+                    若无角色，分镜将以旁白 + 画面意象驱动。
+                  </span>
+                </div>
+              )}
+              <CharacterManager
+                characters={localSeries.characters || []}
+                seriesId={localSeries.id}
+                userPhone={userPhone}
+                seriesStatus={localSeries.status}
+                productionType={localSeries.productionType}
+                onUpdate={handleCharacterUpdate}
+              />
+            </>
           )}
 
           {currentView === 'storyboards' && selectedEpisode && (

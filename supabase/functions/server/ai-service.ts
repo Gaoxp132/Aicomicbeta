@@ -5,7 +5,7 @@
 
 import type { AITaskTier } from "./types.ts";
 import { DOUBAO_CHAT_URL, DOUBAO_MODELS, EXHAUSTION_COOLDOWN_MS, DASHSCOPE_CHAT_URL } from "./constants.ts";
-import { fetchWithTimeout } from "./utils.ts";
+import { fetchWithTimeout, getErrorMessage, getErrorName } from "./utils.ts";
 
 const VOLCENGINE_API_KEY = Deno.env.get('VOLCENGINE_API_KEY') || '';
 const ALIYUN_BAILIAN_API_KEY = Deno.env.get('ALIYUN_BAILIAN_API_KEY') || '';
@@ -36,17 +36,23 @@ function _isModelAvailable(model: string): boolean {
  * v6.0.157: 将纯文本消息转换为多模态格式（图文混合）
  * 仅修改最后一条 user 消息的 content 为 OpenAI multimodal 数组格式
  */
+type MultimodalContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
+type ChatMessage = { role: string; content: string | MultimodalContentPart[] };
+
 function _buildMultimodalMessages(
   messages: Array<{ role: string; content: string }>,
   imageUrls: string[],
-): Array<{ role: string; content: any }> {
+): Array<ChatMessage> {
   // 找到最后一条user消息，将其content改为multimodal数组
   const result = messages.map((msg, idx) => {
     // 只在最后一条user消息注入图片
     const isLastUser = msg.role === 'user' && messages.slice(idx + 1).every(m => m.role !== 'user');
     if (!isLastUser) return msg;
 
-    const contentParts: any[] = [];
+    const contentParts: MultimodalContentPart[] = [];
     // 图片在前（模型先看图再读指令，效果更好）
     for (const url of imageUrls) {
       contentParts.push({ type: 'image_url', image_url: { url } });
@@ -107,7 +113,7 @@ export async function callAI(params: {
           ? _buildMultimodalMessages(sanitizedMessages, imageUrls)
           : sanitizedMessages;
 
-        const body: any = { model, messages: finalMessages, temperature };
+        const body: Record<string, unknown> = { model, messages: finalMessages, temperature };
         if (max_tokens) body.max_tokens = max_tokens;
 
         const resp = await fetchWithTimeout(DOUBAO_CHAT_URL, {
@@ -142,8 +148,8 @@ export async function callAI(params: {
 
         console.log(`[AI] Doubao ${model} success (tier=${tier}${isVisionMode ? ',vision' : ''}, tokens=${data?.usage?.total_tokens || '?'})`);
         return { content, model };
-      } catch (err: any) {
-        const msg = err.name === 'AbortError' ? 'timeout' : err.message;
+      } catch (err: unknown) {
+        const msg = getErrorName(err) === 'AbortError' ? 'timeout' : getErrorMessage(err);
         console.warn(`[AI] Doubao ${model} exception: ${msg}`);
         errors.push(`${model}:${msg}`);
         continue;
@@ -156,7 +162,7 @@ export async function callAI(params: {
       const textCandidates = _getModelsForTier(tier).filter(_isModelAvailable);
       for (const model of textCandidates) {
         try {
-          const body: any = { model, messages: sanitizedMessages, temperature }; // 纯文本消息，不含图片
+          const body: Record<string, unknown> = { model, messages: sanitizedMessages, temperature }; // 纯文本消息，不含图片
           if (max_tokens) body.max_tokens = max_tokens;
 
           const resp = await fetchWithTimeout(DOUBAO_CHAT_URL, {
@@ -177,8 +183,8 @@ export async function callAI(params: {
 
           console.log(`[AI] Doubao ${model} text-fallback success (vision pro exhausted, tier=${tier})`);
           return { content, model };
-        } catch (err: any) {
-          errors.push(`${model}:${err.name === 'AbortError' ? 'timeout' : err.message}(text-fallback)`);
+        } catch (err: unknown) {
+          errors.push(`${model}:${getErrorName(err) === 'AbortError' ? 'timeout' : getErrorMessage(err)}(text-fallback)`);
         }
       }
     }
@@ -191,7 +197,7 @@ export async function callAI(params: {
       console.warn(`[AI] Qwen fallback does not support vision — degrading to text-only (${imageUrls.length} images dropped)`);
     }
     try {
-      const body: any = { model: 'qwen-turbo', messages: sanitizedMessages, temperature };
+      const body: Record<string, unknown> = { model: 'qwen-turbo', messages: sanitizedMessages, temperature };
       if (max_tokens) body.max_tokens = max_tokens;
 
       const resp = await fetchWithTimeout(DASHSCOPE_CHAT_URL, {
@@ -210,8 +216,8 @@ export async function callAI(params: {
       }
       const errText = await resp.text().catch(() => '');
       errors.push(`qwen-turbo:${resp.status}:${errText.substring(0, 100)}`);
-    } catch (err: any) {
-      errors.push(`qwen-turbo:${err.message}`);
+    } catch (err: unknown) {
+      errors.push(`qwen-turbo:${getErrorMessage(err)}`);
     }
   }
 

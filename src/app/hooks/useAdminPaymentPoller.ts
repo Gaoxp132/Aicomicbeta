@@ -55,7 +55,7 @@ export function useAdminPaymentPoller(
     try {
       const result = await apiGet(`/admin/pending-count?adminPhone=${adminPhone}`, { silent: true });
       if (!result.success) return;
-      const newCount: number = result.data?.pendingCount ?? 0;
+      const newCount: number = Number(result.data?.pendingCount ?? 0);
       setPendingCount(newCount);
 
       if (baselineRef.current === -1) {
@@ -102,7 +102,7 @@ export function useAdminPaymentPoller(
         },
       });
     } catch (err: unknown) {
-      // 网络失败不影响体验，静默忽略
+      // 网络失败不影响体验，��默忽略
     }
   }, [adminPhone, storageKey, onNewPayments]);
 

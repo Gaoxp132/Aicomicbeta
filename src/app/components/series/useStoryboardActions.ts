@@ -10,7 +10,7 @@ import * as seriesService from '../../services';
 import { apiRequest } from '../../utils';
 import { useStoryboardBatchOps } from './useStoryboardBatchOps';
 import { getErrorMessage } from '../../utils';
-import { PollingTimeoutError, isPollingTimeoutError } from '../../services/volcengine';
+import { isPollingTimeoutError } from '../../services/volcengine';
 
 interface UseStoryboardActionsOpts {
   seriesId: string;
@@ -26,8 +26,8 @@ interface UseStoryboardActionsOpts {
   persistStoryboardEdit: (id: string, data: Partial<Storyboard>) => void;
   persistSortOrder: (sbs: Storyboard[]) => void;
   persistDeleteAndReorder: (ids: string[], remaining: Storyboard[]) => void;
-  patchStoryboardStatus: (id: string, status: string, extra?: any) => void;
-  showConfirm: (opts: any) => Promise<boolean>;
+  patchStoryboardStatus: (id: string, status: string, extra?: Record<string, unknown>) => void;
+  showConfirm: (opts: { title: string; description?: string; confirmText?: string; variant?: string }) => Promise<boolean>;
 }
 
 export function useStoryboardActions(opts: UseStoryboardActionsOpts) {
@@ -135,7 +135,7 @@ export function useStoryboardActions(opts: UseStoryboardActionsOpts) {
       if (sb.id !== orig.id) return sb;
       return { ...sb, description: orig.description || sb.description, dialogue: orig.dialogue ?? sb.dialogue };
     }));
-    const patchBody: any = {};
+    const patchBody: Record<string, unknown> = {};
     if (orig.description) patchBody.description = orig.description;
     if (orig.dialogue !== undefined) patchBody.dialogue = orig.dialogue;
     if (Object.keys(patchBody).length > 0) {
@@ -176,8 +176,8 @@ export function useStoryboardActions(opts: UseStoryboardActionsOpts) {
           sceneNumber: storyboard.sceneNumber,
           originalDescription: storyboard.description || '',
           originalDialogue: storyboard.dialogue,
-          polishedDescription: result.data.description,
-          polishedDialogue: result.data.dialogue,
+          polishedDescription: result.data.description as string | undefined,
+          polishedDialogue: result.data.dialogue as string | undefined,
         });
       } else {
         toast.error('润色失败：' + (result.error || '未知错误'));
@@ -203,7 +203,7 @@ export function useStoryboardActions(opts: UseStoryboardActionsOpts) {
       return { ...sb, ...updates };
     }));
     if (polishedDescription || polishedDialogue) {
-      const patchBody: any = { episodeNumber: episode.episodeNumber, sceneNumber };
+      const patchBody: Record<string, unknown> = { episodeNumber: episode.episodeNumber, sceneNumber };
       if (polishedDescription) patchBody.description = polishedDescription;
       if (polishedDialogue) patchBody.dialogue = polishedDialogue;
       apiRequest(`/series/${seriesId}/storyboards/${storyboardId}`, {
@@ -383,7 +383,7 @@ export function useStoryboardActions(opts: UseStoryboardActionsOpts) {
       const result = await seriesService.generateStoryboards(seriesId, episode.id);
       
       if (result.success && result.data) {
-        const newStoryboards = Array.isArray(result.data) ? result.data : (result.data?.storyboards || []);
+        const newStoryboards = (Array.isArray(result.data) ? result.data : (result.data?.storyboards || [])) as Storyboard[];
         updateStoryboards(prev => [...prev, ...newStoryboards]);
         
         toast.success(`AI成功生成 ${newStoryboards.length} 个分镜！`);

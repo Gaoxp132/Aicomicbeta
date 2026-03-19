@@ -18,7 +18,7 @@ interface CommunityPanelProps {
 }
 
 export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps) {
-  // v6.0.37: 默认选中"全部"而不是"漫剧系列"
+  // v6.0.37: 默认选中"全部"而不是"影视系列"
   const [selectedCategory, setSelectedCategory] = useState<CategoryType>('all');
   const [sortBy, setSortBy] = useState<SortType>('latest');
   const [searchQuery, setSearchQuery] = useState('');
@@ -45,7 +45,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
     refreshNewWorks,
   } = useCommunityWorks({ selectedCategory, sortBy, searchQuery, userPhone });
 
-  // 使用自定义 hooks - 漫剧系列
+  // 使用自定义 hooks - 影视系列
   const {
     series,
     isLoading: isLoadingSeries,
@@ -86,9 +86,9 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
     toast.success('刷新完成');
   };
 
-  // 处理漫剧系列点击 - 🔥 修复：先获取详情再打开播放器
+  // 处理影视系列点击 - 🔥 修复：先获取详情再打开播放器
   const handleSeriesClick = async (clickedSeries: CommunitySeriesWork) => {
-    // 🔥 先获取完整的漫剧详情（包含episodes和videoUrl）
+    // 🔥 先获取完整的影视详情（包含episodes和videoUrl）
     try {
       const result = await communityAPI.getSeriesDetail(clickedSeries.id, userPhone);
       
@@ -96,7 +96,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
         // 使用包含完整数据的详情打开播放器
         setSelectedSeries(result.data);
       } else {
-        toast.error('无法加载漫剧详情');
+        toast.error('无法加载作品详情');
       }
     } catch (error: unknown) {
       console.error('[CommunityPanel] Series detail error:', error);
@@ -120,7 +120,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
     }
   };
 
-  // 处理漫剧系列点赞
+  // 处理影视系列点赞
   const handleSeriesLike = async (seriesId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
@@ -156,7 +156,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
     }
   };
 
-  // 处理漫剧系列评论
+  // 处理影视系列评论
   const handleSeriesComment = async (clickedSeries: CommunitySeriesWork, e: React.MouseEvent) => {
     e.stopPropagation();
     
@@ -173,14 +173,14 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
     }
   };
 
-  // 处理漫剧系列分享 — v6.0.60: 使用共享shareUtils
+  // 处理影视系列分享 — v6.0.60: 使用共享shareUtils
   const handleSeriesShare = async (seriesId: string, seriesTitle: string, e: React.MouseEvent) => {
     e.stopPropagation();
 
     // 1. 实际分享动作
     const result = await shareContent({
-      title: seriesTitle || 'AI漫剧',
-      text: `${seriesTitle || 'AI漫剧'} - 快来看看这部AI漫剧!`,
+      title: seriesTitle || 'AI影视作品',
+      text: `${seriesTitle || 'AI影视作品'} - 快来看看这部AI创作的作品!`,
       url: window.location.href,
     });
 
@@ -316,7 +316,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
               onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
             >
-              {/* 显示漫剧系列 */}
+              {/* 显示影视系列 */}
               {shouldShowSeries && series
                 .filter(seriesItem => seriesItem && seriesItem.id)  // 🔧 只渲染有有效id的系列
                 .map((seriesItem) => (
@@ -384,7 +384,7 @@ export function CommunityPanel({ onSelectComic, userPhone }: CommunityPanelProps
         )}
       </motion.div>
 
-      {/* 漫剧系列查看器 */}
+      {/* 影视系列查看器 */}
       <AnimatePresence>
         {selectedSeries && (
           <SeriesViewer

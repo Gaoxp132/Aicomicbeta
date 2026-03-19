@@ -1,6 +1,6 @@
 /**
- * AI漫剧 - 主应用组件
- * v6.0.175 - 暗色主题确认对话框替代原生confirm()
+ * AI影视 - 主应用组件
+ * v6.0.185 - 端到端冒烟测试+遗留类型修复
  */
 
 import React, { useState, useCallback, useEffect } from 'react';

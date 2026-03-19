@@ -17,7 +17,7 @@ import type { Series } from '../../types';
 
 export const QUICK_TEMPLATES = [
   { id: 'romance', label: '都市爱情', icon: '💕', prompt: '一段都市白领之间的浪漫爱情故事，咖啡馆偶遇，从误解到心动', genre: 'romance', matchStyle: 'realistic', gradient: 'from-pink-500/20 to-rose-500/20', border: 'border-pink-500/30' },
-  { id: 'suspense', label: '悬疑推理', icon: '🔍', prompt: '一个扣人心弦的悬疑推理故事，密室谋杀，每个人都有秘密', genre: 'suspense', matchStyle: 'realistic', gradient: 'from-purple-500/20 to-indigo-500/20', border: 'border-purple-500/30' },
+  { id: 'suspense', label: '悬疑推理', icon: '🔍', prompt: '一个扣人心弦的悬疑推理故事，密室谋杀，每个人都秘密', genre: 'suspense', matchStyle: 'realistic', gradient: 'from-purple-500/20 to-indigo-500/20', border: 'border-purple-500/30' },
   { id: 'fantasy', label: '奇幻冒险', icon: '⚔️', prompt: '一段充满奇幻元素的冒险旅程，少年踏入未知大陆寻找传说中的遗迹', genre: 'fantasy', matchStyle: 'fantasy', gradient: 'from-cyan-500/20 to-blue-500/20', border: 'border-cyan-500/30' },
   { id: 'comedy', label: '校园喜剧', icon: '😄', prompt: '一个充满欢笑的校园生活喜剧，社团招新闹出的一系列乌龙事件', genre: 'comedy', matchStyle: 'anime', gradient: 'from-yellow-500/20 to-orange-500/20', border: 'border-yellow-500/30' },
   { id: 'scifi', label: '科幻未来', icon: '🚀', prompt: '发生在2150年的科幻故事，人类与AI共存的世界出现了意想不到的危机', genre: 'scifi', matchStyle: 'cyberpunk', gradient: 'from-blue-500/20 to-purple-500/20', border: 'border-blue-500/30' },
@@ -51,7 +51,9 @@ export const PRODUCTION_TYPES = [
   { id: 'tv_series', label: '电视剧', icon: '📺', desc: '长篇电视连续剧', gradient: 'from-green-500 to-emerald-500' },
   { id: 'documentary', label: '纪录片', icon: '🌍', desc: '真实题材纪实影像', gradient: 'from-teal-500 to-cyan-600' },
   { id: 'music_video', label: 'MV', icon: '🎵', desc: '音乐影像作品', gradient: 'from-violet-500 to-fuchsia-500' },
-  { id: 'advertisement', label: '广告片', icon: '📢', desc: '品牌/产品宣传片', gradient: 'from-yellow-500 to-amber-500' },
+  { id: 'advertisement', label: '广告片', icon: '📢', desc: '品牌/产品广告片', gradient: 'from-yellow-500 to-amber-500' },
+  { id: 'brand_promo', label: '品牌宣传', icon: '🏢', desc: '企业品牌形象宣传片', gradient: 'from-indigo-500 to-blue-600' },
+  { id: 'product_promo', label: '产品宣传', icon: '🎯', desc: '产品发布/推广视频', gradient: 'from-emerald-500 to-teal-500' },
 ] as const;
 
 export const EPISODE_PRESETS = [
@@ -60,7 +62,7 @@ export const EPISODE_PRESETS = [
   { count: 10, label: '10集·标准', desc: '完整故事' },
 ] as const;
 
-export const MAX_INPUT_LENGTH = 500;
+export const MAX_INPUT_LENGTH = 10000;
 
 // ═══════════════════════════════════════════════════════════════════
 // [B] FeatureCard (was: FeatureCard.tsx)
@@ -109,7 +111,7 @@ export function RecentSeriesCard({ series, onEdit }: { series: Series; onEdit?: 
 
 // ═══════════════════════════════════════════════════════════════════
 // [D] ReferenceImageInput (was: ReferenceImageInput.tsx)
-// ════════════════════════════════════════════════════════════���══════
+// ══════════════════════════════════════════════════════════════════
 
 interface ReferenceImageInputProps {
   referenceImage: string | null; referenceImagePreview: string | null; isUploadingRef: boolean; isCreating: boolean; userPhone?: string;
@@ -136,7 +138,7 @@ export function ReferenceImageInput({
     try {
       const formData = new FormData(); formData.append('file', file); formData.append('purpose', 'reference');
       const result = await apiUpload('/upload-image', formData, { headers: userPhone ? { 'X-User-Phone': userPhone } : {} });
-      if (result.success && result.data?.url) { onReferenceImageChange(result.data.url); toast.success('参考图上传成功'); }
+      if (result.success && result.data?.url) { onReferenceImageChange(String(result.data.url)); toast.success('参考图上传成功'); }
       else { throw new Error(result.error || '上传失败'); }
     } catch (err: unknown) { console.error('[ReferenceImageInput] Upload failed:', err); toast.error('参考图上传失败: ' + getErrorMessage(err)); onReferenceImagePreviewChange(null); }
     finally { onIsUploadingRefChange(false); if (refImageInputRef.current) refImageInputRef.current.value = ''; }

@@ -8,6 +8,7 @@ import {
   Play, Heart, MessageCircle, Share2, Film, CheckCircle, Clock, PlayCircle,
 } from 'lucide-react';
 import { formatNumber } from '../../utils';
+import type { RawWork } from '../../utils';
 import type { CommunitySeriesWork } from '../../types';
 
 // ═══════════════════════════════════════════════════════════════════
@@ -15,7 +16,7 @@ import type { CommunitySeriesWork } from '../../types';
 // ═══════════════════════════════════════════════════════════════════
 
 interface WorkCardProps {
-  work: any;
+  work: RawWork;
   interactions: {
     likes: number;
     shares: number;
@@ -228,7 +229,7 @@ export function SeriesCard({
           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-800/30 to-pink-800/30">
             <div className="text-center">
               <Film className="w-8 h-8 sm:w-12 sm:h-12 text-purple-400 mx-auto mb-1 sm:mb-2" />
-              <p className="text-gray-400 text-xs sm:text-sm">漫剧系列</p>
+              <p className="text-gray-400 text-xs sm:text-sm">影视系列</p>
             </div>
           </div>
         )}
@@ -242,7 +243,7 @@ export function SeriesCard({
 
         <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 px-1.5 sm:px-2 py-0.5 sm:py-1 bg-purple-600/80 backdrop-blur-sm rounded-lg text-[10px] sm:text-xs text-white font-medium flex items-center gap-0.5 sm:gap-1">
           <Film className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-          漫剧
+          系列
         </div>
 
         <div className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 px-1.5 sm:px-2 py-0.5 sm:py-1 bg-black/60 backdrop-blur-sm rounded text-[10px] sm:text-xs text-white flex items-center gap-0.5">

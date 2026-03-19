@@ -13,18 +13,20 @@ export const PREFIX = '/make-server-fc31472c';
 
 // v6.0.107: 服务端合并阈值（merge-videos + merge-all-videos 共享）
 // Edge Function 内存限制约 150MB，超过阈值时指示前端走本地合并
-export const MAX_SERVER_MERGE_SEGMENTS = 6;      // 分镜数上限
-export const MAX_SERVER_MERGE_SIZE_MB = 60;       // 预估总大小上限（每段约 10MB）
-export const ESTIMATED_SEGMENT_SIZE_MB = 10;      // 每段视频预估大小（720p 10s MP4 典型值）
+export const MAX_SERVER_MERGE_SEGMENTS = 4;      // v6.0.193: 降至4段（6段仍OOM，concat峰值 ≈ 3×totalSize）
+export const MAX_SERVER_MERGE_SIZE_MB = 40;       // v6.0.193: 降至40MB（实际段大小常超10MB估算）
+export const ESTIMATED_SEGMENT_SIZE_MB = 12;      // v6.0.193: 上调至12MB（720p 10s H265更准确）
 
 // 环境变量（路由中需要做特性检查的导出）
 export const VOLCENGINE_API_KEY = Deno.env.get('VOLCENGINE_API_KEY') || '';
 export const ALIYUN_BAILIAN_API_KEY = Deno.env.get('ALIYUN_BAILIAN_API_KEY') || '';
 export const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
 
-// 火山引擎配置
-export const VOLCENGINE_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks";
-export const DOUBAO_CHAT_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+// 火山引擎配置 — 支持通过环境变量覆盖，以便使用代理或国际端点
+const VOLC_DEFAULT_BASE = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks";
+const VOLC_DEFAULT_CHAT = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+export const VOLCENGINE_BASE_URL = Deno.env.get('VOLCENGINE_BASE_URL') || VOLC_DEFAULT_BASE;
+export const DOUBAO_CHAT_URL = Deno.env.get('VOLCENGINE_CHAT_URL') || VOLC_DEFAULT_CHAT;
 
 // 阿里云百炼 API URLs
 export const DASHSCOPE_CHAT_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
@@ -116,6 +118,18 @@ export const PRODUCTION_TYPE_PROMPTS: Record<string, ProductionTypeConfig> = {
     shotStyle: '产品特写使用微距+光滑运镜(slider)；人物使用中景展示使用场景；品牌logo始终保持视觉位置',
     editingStyle: '镜头时长1-3秒极快节奏；使用speed ramp(变速)制造冲击力；最后定格在品牌画面',
     colorTone: '品牌色贯穿全片；高明度高饱和度吸引注意力；白色/浅色背景突出品质感',
+  },
+  brand_promo: {
+    label: '品牌宣传片', narrativeStyle: '宏大叙事+情感共鸣；以品牌使命/愿景为核心驱动力；从历史传承到未来愿景的时间线叙事；用真实故事与画面传递品牌温度与格局',
+    shotStyle: '大量航拍+延时摄影展现规模与格局；工匠/团队特写传递专业精神；产品线微距展示工艺细节；品牌标志性建筑/场景使用对称构图彰显大气',
+    editingStyle: '镜头时长4-8秒沉稳大气节奏；使用平滑溶解(dissolve)过渡暗示时间流逝；配合交响乐/钢琴渐入强化情感递进；结尾品牌LOGO+Slogan定格3-5秒',
+    colorTone: '品牌主色调贯穿全片作为视觉锚点；暗部保留细节的电影级调色；暖色调传递人文关怀/冷色调传递科技实力；高端质感的低饱和度金属光泽',
+  },
+  product_promo: {
+    label: '产品宣传片', narrativeStyle: '悬念揭幕式开场→核心功能逐一展示→真实场景体验→震撼数据/对比→CTA行动号召；每个镜头服务于一个核心卖点',
+    shotStyle: '产品360度旋转展示使用微距+slider运镜；功能演示使用分屏对比/画中画；使用场景中景展示产品与人的交互；科技内核使用X光/透视/粒子特效可视化',
+    editingStyle: '节奏紧凑1-3秒快切与4-6秒慢展交替；使用speed ramp(变速)突出关键功能瞬间；核心数据使用动态字幕(motion graphics)强化记忆；结尾产品+价格+CTA定格',
+    colorTone: '产品本体使用高光泽/高对比度突出质感；场景背景低饱和度避免抢夺视线；功能演示使用品牌色高亮标注；整体画面干净通透有科技感',
   },
 };
 

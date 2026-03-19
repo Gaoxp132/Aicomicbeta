@@ -6,15 +6,26 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
 import { markNetworkSuccess, convertWorkToComic, shareContent, getErrorMessage } from '../utils';
+import type { RawWork } from '../utils';
 import * as communityAPI from '../services';
 import type { Comic, CommunitySeriesWork } from '../types';
+
+// 社区评论数据结构
+interface CommunityComment {
+  id: string;
+  content: string;
+  userPhone?: string;
+  userNickname?: string;
+  createdAt?: string;
+  [key: string]: unknown;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // [3] useComments
 // ═══════════════════════════════════════════════════════════════════
 
 export function useComments(workId: string, userPhone?: string) {
-  const [comments, setComments] = useState<any[]>([]);
+  const [comments, setComments] = useState<CommunityComment[]>([]);
   const [commentText, setCommentText] = useState('');
   const [isLoadingComments, setIsLoadingComments] = useState(false);
   const [showComments, setShowComments] = useState(false);
@@ -48,7 +59,7 @@ export interface WorkInteractions { likes: number; shares: number; comments: num
 interface UseCommunityWorksProps { selectedCategory: string; sortBy: string; searchQuery: string; userPhone?: string; }
 
 export function useCommunityWorks({ selectedCategory, sortBy, searchQuery, userPhone }: UseCommunityWorksProps) {
-  const [works, setWorks] = useState<any[]>([]);
+  const [works, setWorks] = useState<RawWork[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -60,8 +71,8 @@ export function useCommunityWorks({ selectedCategory, sortBy, searchQuery, userP
   const [lastLoadTime, setLastLoadTime] = useState<Date | null>(null);
   const [hasInitialLoad, setHasInitialLoad] = useState(false);
 
-  const loadInteractions = (worksList: any[]) => {
-    worksList.forEach((work: any) => {
+  const loadInteractions = (worksList: RawWork[]) => {
+    worksList.forEach((work: RawWork) => {
       setInteractions(prev => new Map(prev).set(work.id, { likes: work.likes || 0, shares: work.shares || 0, comments: work.comments || 0, isLiked: false }));
       if (userPhone) {
         communityAPI.getLikeStatus(work.id, userPhone).then(res => {
@@ -77,8 +88,8 @@ export function useCommunityWorks({ selectedCategory, sortBy, searchQuery, userP
     try {
       const result = await communityAPI.getCommunityWorks({ category: selectedCategory === 'all' ? undefined : selectedCategory, sort: sortBy, search: searchQuery || undefined, since: lastLoadTime.toISOString() });
       if (result.success && result.works && result.works.length > 0) {
-        const validWorks = result.works.filter((work: any) => { const key = work.task_id || work.id; if (!key) return false; if (!work.id || work.id !== work.task_id) work.id = work.task_id; return true; });
-        setWorks(prev => { const existingTaskIds = new Set(prev.map(w => w.task_id || w.id)); const newWorks = validWorks.filter((w: any) => !existingTaskIds.has(w.task_id || w.id)); return [...newWorks, ...prev]; });
+        const validWorks = result.works.filter((work: RawWork) => { const key = work.task_id || work.id; if (!key) return false; if (!work.id || work.id !== work.task_id) work.id = work.task_id; return true; });
+        setWorks(prev => { const existingTaskIds = new Set(prev.map(w => w.task_id || w.id)); const newWorks = validWorks.filter((w: RawWork) => !existingTaskIds.has(w.task_id || w.id)); return [...newWorks, ...prev]; });
         loadInteractions(validWorks);
         if (validWorks.length > 0) setLastLoadTime(new Date(validWorks[0].created_at));
       }
@@ -92,7 +103,7 @@ export function useCommunityWorks({ selectedCategory, sortBy, searchQuery, userP
       const result = await communityAPI.getCommunityWorks({ page: 1, limit: 20, category: selectedCategory === 'all' ? undefined : selectedCategory, sort: sortBy, search: searchQuery || undefined });
       if (result.success && result.works) {
         const seenKeys = new Set<string>();
-        const uniqueWorks = result.works.filter((work: any) => { const key = work.task_id || work.id; if (!key) return false; if (seenKeys.has(key)) return false; seenKeys.add(key); if (!work.id || work.id !== work.task_id) work.id = work.task_id; return true; });
+        const uniqueWorks = result.works.filter((work: RawWork) => { const key = work.task_id || work.id; if (!key) return false; if (seenKeys.has(key)) return false; seenKeys.add(key); if (!work.id || work.id !== work.task_id) work.id = work.task_id; return true; });
         setWorks(uniqueWorks); setPage(1); setHasMore(result.hasMore); setError(null); setRetryCount(0);
         loadInteractions(uniqueWorks);
       }
@@ -109,8 +120,8 @@ export function useCommunityWorks({ selectedCategory, sortBy, searchQuery, userP
     try {
       const result = await communityAPI.getCommunityWorks({ page: page + 1, limit: 50, category: selectedCategory, sort: sortBy, search: searchQuery });
       if (result.success) {
-        const validWorks = result.works.filter((work: any) => { const key = work.task_id || work.id; if (!key) return false; if (!work.id || work.id !== work.task_id) work.id = work.task_id; return true; });
-        setWorks(prev => { const existingIds = new Set(prev.map(w => w.id || w.task_id)); const newWorks = validWorks.filter((w: any) => !existingIds.has(w.id || w.task_id)); return [...prev, ...newWorks]; });
+        const validWorks = result.works.filter((work: RawWork) => { const key = work.task_id || work.id; if (!key) return false; if (!work.id || work.id !== work.task_id) work.id = work.task_id; return true; });
+        setWorks(prev => { const existingIds = new Set(prev.map(w => w.id || w.task_id)); const newWorks = validWorks.filter((w: RawWork) => !existingIds.has(w.id || w.task_id)); return [...prev, ...newWorks]; });
         loadInteractions(validWorks);
         if (validWorks.length < 50) setHasMore(false);
         setPage(prev => prev + 1);
@@ -127,7 +138,7 @@ export function useCommunityWorks({ selectedCategory, sortBy, searchQuery, userP
 
 // ═══════════════════════════════════════════════════════════════════
 // [5] useCommunityInteractions
-// ═══════════════════════════════════════════════���═══════════════════
+// ═══════════════════════════════════════════════════════════════════
 
 interface UseCommunityInteractionsProps { userPhone?: string; onSelectComic: (comic: Comic, comicsList?: Comic[]) => void; }
 
@@ -141,11 +152,11 @@ export function useCommunityInteractions({ userPhone, onSelectComic }: UseCommun
     } catch (error: unknown) { console.error('Failed to toggle like:', error); }
   };
 
-  const handleComment = (work: any, works: any[], e: React.MouseEvent) => { e.stopPropagation(); handleWorkClick(work, works); };
+  const handleComment = (work: RawWork, works: RawWork[], e: React.MouseEvent) => { e.stopPropagation(); handleWorkClick(work, works); };
 
   const handleShare = async (workId: string, e: React.MouseEvent, setInteractions: React.Dispatch<React.SetStateAction<Map<string, WorkInteractions>>>, workTitle?: string) => {
     e.stopPropagation();
-    const result = await shareContent({ title: workTitle || 'AI漫剧作品', text: workTitle ? `${workTitle} - 快来看看这部AI漫剧!` : '快来看看这部AI漫剧!', url: window.location.href });
+    const result = await shareContent({ title: workTitle || 'AI影视作品', text: workTitle ? `${workTitle} - 快来看看这部AI创作的作品!` : '快来看看这部AI创作的作品!', url: window.location.href });
     if (result === 'cancelled') return;
     if (result === 'copied') toast.success('链接已复制到剪贴板');
     else if (result === 'shared') toast.success('分享成功');
@@ -156,7 +167,7 @@ export function useCommunityInteractions({ userPhone, onSelectComic }: UseCommun
     } catch (error: unknown) { console.error('Failed to increment share count:', error); }
   };
 
-  const handleWorkClick = (work: any, works: any[]) => {
+  const handleWorkClick = (work: RawWork, works: RawWork[]) => {
     communityAPI.incrementViews(work.id).catch(() => {});
     const comic: Comic = convertWorkToComic(work);
     const comicsList: Comic[] = works.map(convertWorkToComic);
@@ -206,7 +217,7 @@ export function useCommunitySeries({ selectedCategory, sortBy, searchQuery, user
     } catch (err: unknown) {
       console.error('[useCommunitySeries] Load error:', err);
       const errMsg = getErrorMessage(err);
-      if (errMsg.includes('Failed to fetch')) { setSeries([]); setError(null); } else setError(errMsg || '加载漫剧系列失败');
+      if (errMsg.includes('Failed to fetch')) { setSeries([]); setError(null); } else setError(errMsg || '加载影视系列失败');
     } finally { setIsLoading(false); setIsLoadingMore(false); }
   };
 

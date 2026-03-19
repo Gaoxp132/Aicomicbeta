@@ -168,7 +168,7 @@ export function useEpisodeActions({
               // 本地合并产出 blobUrl，触发自动下载
               const a = document.createElement('a');
               a.href = blobUrl;
-              a.download = `${series.title || '漫剧'}-第${epNum}集.mp4`;
+              a.download = `${series.title || '作品'}-第${epNum}集.mp4`;
               document.body.appendChild(a);
               a.click();
               document.body.removeChild(a);
@@ -225,7 +225,7 @@ export function useEpisodeActions({
         toast.success('视频修复完成！');
         const refreshResult = await services.getSeries(series.id);
         if (refreshResult.success && refreshResult.data?.episodes) {
-          onEpisodesUpdate(refreshResult.data.episodes);
+          onEpisodesUpdate(refreshResult.data.episodes as Episode[]);
         }
       } else {
         toast.error('视频修复失败：' + (result.error || '未知错误'));
@@ -249,7 +249,7 @@ export function useEpisodeActions({
         toast.success(`缩略图同步完成！剧集: ${synced}，分镜: ${sbSynced}`);
         const refreshResult = await services.getSeries(series.id);
         if (refreshResult.success && refreshResult.data?.episodes) {
-          onEpisodesUpdate(refreshResult.data.episodes);
+          onEpisodesUpdate(refreshResult.data.episodes as Episode[]);
         }
       } else {
         toast.error('缩略图同步失败：' + (result.error || '未知错误'));

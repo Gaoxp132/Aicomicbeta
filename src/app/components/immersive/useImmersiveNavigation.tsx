@@ -4,11 +4,12 @@
  */
 
 import { useState, useRef, useCallback } from 'react';
+import type { RawWork } from '../../utils';
 
 interface UseImmersiveNavigationOptions {
-  work: any;
-  allWorks?: any[];
-  onWorkChange?: (work: any) => void;
+  work: RawWork;
+  allWorks?: RawWork[];
+  onWorkChange?: (work: RawWork) => void;
   showComments: boolean;
   setIsPlaying: (v: boolean) => void;
   setCurrentTime: (v: number) => void;

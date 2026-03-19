@@ -7,19 +7,19 @@
 
 const CDN_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1.6.15/dist/hls.light.min.js';
 
-let _real: any = typeof window !== 'undefined' ? window.Hls : null;
-let _loading: Promise<any> | null = null;
+let _real: HlsConstructor | null = typeof window !== 'undefined' ? window.Hls ?? null : null;
+let _loading: Promise<HlsConstructor | null> | null = null;
 
 /**
  * Preload hls.js from CDN. Returns the real Hls class or null.
  * Safe to call multiple times — deduplicates.
  */
-export function preloadHls(): Promise<any> {
+export function preloadHls(): Promise<HlsConstructor | null> {
   if (_real) return Promise.resolve(_real);
   if (_loading) return _loading;
   if (typeof window === 'undefined') return Promise.resolve(null);
 
-  _loading = new Promise<any>((resolve) => {
+  _loading = new Promise<HlsConstructor | null>((resolve) => {
     const script = document.createElement('script');
     script.src = CDN_URL;
     script.onload = () => {

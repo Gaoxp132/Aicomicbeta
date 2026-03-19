@@ -6,6 +6,7 @@ import { Button, Input, Textarea, Badge, Card } from '../ui';
 import type { Series, Chapter, Episode } from '../../types';
 import { SeriesFixTool } from './HealthWidgets';
 import { ConfirmDialog, useConfirm } from './ConfirmDialog';
+import { getEffectiveEpisodeStatus } from '../../utils';
 
 // ── SeriesFixTool extracted to HealthWidgets.tsx (v6.0.88) ────────
 
@@ -156,7 +157,7 @@ export function ChapterManager({ series, onChaptersUpdate, onEpisodeSelect, onRe
     const chapterEpisodes = getChapterEpisodes(chapter);
     if (chapterEpisodes.length === 0) return 'draft';
     
-    const completedCount = chapterEpisodes.filter(ep => ep.status === 'completed').length;
+    const completedCount = chapterEpisodes.filter(ep => getEffectiveEpisodeStatus(ep) === 'completed').length;
     if (completedCount === chapterEpisodes.length) return 'completed';
     if (completedCount > 0) return 'in-progress';
     return 'draft';
@@ -200,7 +201,7 @@ export function ChapterManager({ series, onChaptersUpdate, onEpisodeSelect, onRe
       {chapters.length === 0 && series.totalEpisodes > 15 && (
         <Card className="p-4 bg-purple-500/10 border-purple-500/20">
           <p className="text-sm text-purple-200">
-            💡 检测到您的漫剧有 {series.totalEpisodes} 集，建议划分为 {suggestedChapterCount} 个章节，
+            💡 检测到您的作品有 {series.totalEpisodes} 集，建议划分为 {suggestedChapterCount} 个章节，
             每章约 {episodesPerChapter} 集。点击「智能划分章节」自动生成。
           </p>
         </Card>
@@ -210,7 +211,7 @@ export function ChapterManager({ series, onChaptersUpdate, onEpisodeSelect, onRe
       {hasDataIssue && (
         <Card className="p-4 bg-red-500/10 border-red-500/20">
           <p className="text-sm text-red-200 mb-3">
-            ⚠️ 检测到您的漫剧状态为「已完成」，但没有剧集数据。请使用下方工具检查并修复数据完整性。
+            ⚠️ 检测到您的作品状态为「已完成」，但没有剧集数据。请使用下方工具检查并修复数据完整性。
           </p>
           <SeriesFixTool seriesId={series.id} onFixed={onRefresh} />
         </Card>
@@ -278,7 +279,7 @@ export function ChapterManager({ series, onChaptersUpdate, onEpisodeSelect, onRe
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-sm text-slate-400">
-                          {chapterEpisodes.filter(ep => ep.status === 'completed').length} / {chapterEpisodes.length} 集已完成
+                          {chapterEpisodes.filter(ep => getEffectiveEpisodeStatus(ep) === 'completed').length} / {chapterEpisodes.length} 集已完成
                         </span>
                         <Button
                           size="sm"
@@ -333,10 +334,10 @@ export function ChapterManager({ series, onChaptersUpdate, onEpisodeSelect, onRe
                                       第 {episode.episodeNumber} 集: {episode.title}
                                     </span>
                                     <Badge variant={
-                                      episode.status === 'completed' ? 'default' :
+                                      getEffectiveEpisodeStatus(episode) === 'completed' ? 'default' :
                                       episode.status === 'generating' ? 'secondary' : 'outline'
                                     } className="text-xs">
-                                      {episode.status === 'completed' ? '已完成' :
+                                      {getEffectiveEpisodeStatus(episode) === 'completed' ? '已完成' :
                                        episode.status === 'generating' ? '生成中' :
                                        episode.status === 'failed' ? '失败' : '草稿'}
                                     </Badge>

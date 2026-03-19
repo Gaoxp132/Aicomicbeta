@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { Plus, Edit, Trash2, User, Sparkles, Loader2 } from 'lucide-react';
 import { Button, Label } from '../ui';
 import { toast } from 'sonner';
-import { apiPost, apiDelete, apiRequest } from '../../utils';
+import { apiPost, apiDelete, apiRequest, isPromoType } from '../../utils';
 import type { Character } from '../../types';
 import { ConfirmDialog, useConfirm } from './ConfirmDialog';
 
@@ -12,7 +12,8 @@ interface CharacterManagerProps {
   seriesId: string;
   userPhone?: string;
   onUpdate: (characters: Character[]) => void;
-  seriesStatus?: string; // 漫剧当前状态
+  seriesStatus?: string; // 作品当前状态
+  productionType?: string; // 作品类型（宣传片时适配文案）
 }
 
 const ROLE_TYPES = [
@@ -22,7 +23,7 @@ const ROLE_TYPES = [
   { id: 'extra', name: '群演', color: 'from-gray-500 to-gray-600' },
 ];
 
-export function CharacterManager({ characters, seriesId, userPhone, onUpdate, seriesStatus }: CharacterManagerProps) {
+export function CharacterManager({ characters, seriesId, userPhone, onUpdate, seriesStatus, productionType }: CharacterManagerProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isAIGenerating, setIsAIGenerating] = useState(false);
@@ -171,13 +172,17 @@ export function CharacterManager({ characters, seriesId, userPhone, onUpdate, se
     setIsAIGenerating(false);
   };
 
+  const isPromo = isPromoType(productionType);
+  const characterLabel = isPromo ? '出镜元素' : '角色';
+  const aiButtonLabel = isPromo ? 'AI生成出镜元素' : 'AI生成角色';
+
   return (
     <div className="space-y-6">
       {/* 头部 */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-white mb-1">角色管理</h2>
-          <p className="text-sm text-gray-400">管理剧集中的所有角色</p>
+          <h2 className="text-xl font-bold text-white mb-1">{isPromo ? '出镜元素管理' : '角色管理'}</h2>
+          <p className="text-sm text-gray-400">{isPromo ? '管理宣传片中的出镜人物和元素' : '管理剧集中的所有角色'}</p>
         </div>
         {!isAdding && !editingId && (
           <div className="flex gap-2">
@@ -191,7 +196,7 @@ export function CharacterManager({ characters, seriesId, userPhone, onUpdate, se
               ) : (
                 <Sparkles className="w-4 h-4 mr-2" />
               )}
-              {isAIGenerating ? 'AI生成中...' : 'AI生成角色'}
+              {isAIGenerating ? 'AI生成中...' : aiButtonLabel}
             </Button>
             <Button
               onClick={() => setIsAdding(true)}
@@ -310,14 +315,18 @@ export function CharacterManager({ characters, seriesId, userPhone, onUpdate, se
               <div className="w-16 h-16 bg-gradient-to-br from-blue-500/20 to-cyan-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
               </div>
-              <h3 className="text-lg font-semibold text-white mb-2">AI正在创建角色</h3>
-              <p className="text-gray-400">角色信息将在AI创作完成后自动显示，请稍候...</p>
+              <h3 className="text-lg font-semibold text-white mb-2">AI正在创建{characterLabel}</h3>
+              <p className="text-gray-400">{characterLabel}信息将在AI创作完成后自动显示，请稍候...</p>
             </>
           ) : (
             <>
               <User className="w-16 h-16 text-gray-500 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-white mb-2">还没有角色</h3>
-              <p className="text-gray-400 mb-6">点击"AI生成角色"快速创建，或手动添加</p>
+              <h3 className="text-lg font-semibold text-white mb-2">还没有{characterLabel}</h3>
+              <p className="text-gray-400 mb-6">
+                {isPromo
+                  ? `宣传片的出镜元素为可选项，AI会根据内容自动判断。点击"${aiButtonLabel}"让AI决定，或手动添加。`
+                  : `点击"${aiButtonLabel}"快速创建，或手动添加`}
+              </p>
               {!isAdding && (
                 <div className="flex gap-3 justify-center">
                   <Button
@@ -330,7 +339,7 @@ export function CharacterManager({ characters, seriesId, userPhone, onUpdate, se
                     ) : (
                       <Sparkles className="w-4 h-4 mr-2" />
                     )}
-                    {isAIGenerating ? 'AI生成中...' : 'AI生成角色'}
+                    {isAIGenerating ? 'AI生成中...' : aiButtonLabel}
                   </Button>
                   <Button
                     onClick={() => setIsAdding(true)}

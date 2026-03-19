@@ -3,7 +3,7 @@
  * v6.0.138: 新增 ensureOSSCors() 自动配置CORS + generatePresignedGetUrl() 预签名下载
  */
 
-import { fetchWithTimeout } from "./utils.ts";
+import { fetchWithTimeout, getErrorMessage } from "./utils.ts";
 
 const OSS_ACCESS_KEY_ID = Deno.env.get('ALIYUN_OSS_ACCESS_KEY_ID') || '';
 const OSS_ACCESS_KEY_SECRET = Deno.env.get('ALIYUN_OSS_ACCESS_KEY_SECRET') || '';
@@ -93,9 +93,9 @@ export async function transferFileToOSS(
   console.log(`[OSS] Downloading from: ${sourceUrl.substring(0, 100)}...`);
   try {
     return await downloadAndUpload(sourceUrl);
-  } catch (err: any) {
+  } catch (err: unknown) {
     // v6.0.160/173: 403通常是TOS签名URL过期——如果有refreshUrlFn，尝试获取新鲜URL重试
-    const is403 = err.message?.includes('HTTP 403');
+    const is403 = getErrorMessage(err).includes('HTTP 403');
     const isTosUrl = sourceUrl.includes('volces.com') || sourceUrl.includes('tos-cn') || sourceUrl.includes('volcengineapi.com');
     // v6.0.173: 只要有refreshUrlFn且是403就尝试刷新（不限TOS域名，避免遗漏新域名格式）
     if (is403 && refreshUrlFn) {
@@ -107,18 +107,20 @@ export async function transferFileToOSS(
           try {
             const result = await downloadAndUpload(freshUrl);
             return result;
-          } catch (retryErr: any) {
-            console.error(`[OSS] Retry with fresh URL also failed for ${objectKey}: ${retryErr.message}`);
+          } catch (retryErr: unknown) {
+            console.error(`[OSS] Retry with fresh URL also failed for ${objectKey}: ${getErrorMessage(retryErr)}`);
             return { url: freshUrl, transferred: false };
           }
         } else {
           console.warn(`[OSS] URL refresh returned no usable URL for ${objectKey}`);
         }
-      } catch (refreshErr: any) {
-        console.warn(`[OSS] URL refresh failed for ${objectKey}: ${refreshErr.message}`);
+      } catch (refreshErr: unknown) {
+        console.warn(`[OSS] URL refresh failed for ${objectKey}: ${getErrorMessage(refreshErr)}`);
       }
+    } else if (is403 && !refreshUrlFn) {
+      console.warn(`[OSS] TOS URL expired (403) for ${objectKey} but NO refreshUrlFn provided — cannot recover. Ensure volcengine_task_id is included in the query.`);
     }
-    console.error(`[OSS] Transfer failed for ${objectKey}: ${err.message}${is403 && isTosUrl ? ' (TOS URL expired)' : ''}`);
+    console.error(`[OSS] Transfer failed for ${objectKey}: ${getErrorMessage(err)}${is403 && isTosUrl ? ' (TOS URL expired)' : ''}${is403 && !refreshUrlFn ? ' (no refreshUrlFn)' : ''}`);
     return { url: sourceUrl, transferred: false };
   }
 }
@@ -193,6 +195,48 @@ export async function generatePresignedGetUrl(
     Signature: signature,
   });
   return `${endpoint}?${params.toString()}`;
+}
+
+/**
+ * v6.0.200: 生成OSS视频截帧的预签名URL
+ * 用于提取视频指定时间点的帧作为图片（用于场景间首尾帧衔接）
+ * @param objectKey 视频文件的OSS对象键（不含bucket）
+ * @param timeMs 截帧时间点（毫秒）
+ * @param expiresIn URL有效期（秒）
+ */
+export async function generateVideoSnapshotUrl(
+  objectKey: string,
+  timeMs: number,
+  expiresIn: number = 3600
+): Promise<string> {
+  if (!isOSSConfigured()) {
+    throw new Error('OSS未配置，无法生成视频截帧URL');
+  }
+  const processParam = `video/snapshot,t_${timeMs},f_jpg,m_fast`;
+  const expires = Math.floor(Date.now() / 1000) + expiresIn;
+  // OSS签名: x-oss-process 作为sub-resource参与签名
+  const resource = `/${OSS_BUCKET}/${objectKey}?x-oss-process=${processParam}`;
+  const stringToSign = `GET\n\n\n${expires}\n${resource}`;
+
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(OSS_ACCESS_KEY_SECRET),
+    { name: 'HMAC', hash: 'SHA-1' },
+    false,
+    ['sign']
+  );
+  const sigBytes = await crypto.subtle.sign('HMAC', key, encoder.encode(stringToSign));
+  const signature = btoa(String.fromCharCode(...new Uint8Array(sigBytes)));
+
+  const baseUrl = `https://${OSS_BUCKET}.${OSS_REGION}.aliyuncs.com/${objectKey}`;
+  const params = new URLSearchParams({
+    'x-oss-process': processParam,
+    OSSAccessKeyId: OSS_ACCESS_KEY_ID,
+    Expires: String(expires),
+    Signature: signature,
+  });
+  return `${baseUrl}?${params.toString()}`;
 }
 
 /**
@@ -276,8 +320,8 @@ export async function ensureOSSCors(): Promise<{ success: boolean; message: stri
       }
       return { success: false, message: `PutBucketCors HTTP ${resp.status}: ${errText.substring(0, 200)}` };
     }
-  } catch (err: any) {
-    console.error(`[OSS-CORS] ❌ PutBucketCors exception: ${err.message}`);
-    return { success: false, message: err.message };
+  } catch (err: unknown) {
+    console.error(`[OSS-CORS] ❌ PutBucketCors exception: ${getErrorMessage(err)}`);
+    return { success: false, message: getErrorMessage(err) };
   }
 }

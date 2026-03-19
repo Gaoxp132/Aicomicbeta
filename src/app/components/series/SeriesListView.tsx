@@ -20,7 +20,7 @@ interface SeriesListViewProps {
   userPhone?: string;
   onDelete: (seriesId: string) => void;
   onRefresh?: () => void;
-  onUpdate?: (callback: (prev: any[]) => any[]) => void;
+  onUpdate?: (callback: (prev: Series[]) => Series[]) => void;
   onSeriesDeleted?: (seriesId: string) => void; // v6.0.6: clean up floating widget tasks
 }
 
@@ -42,8 +42,8 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
     if (!userPhone) return;
     
     const confirmed = await confirmAction({
-      title: '删除漫剧',
-      description: '确定要删除这部漫剧吗？此操作不可恢复，关联的视频生成任务也会被取消。',
+      title: '删除作品',
+      description: '确定要删除这部作品吗？此操作不可恢复，关联的视频生成任务也会被取消。',
       confirmText: '确认删除',
       cancelText: '取消',
       variant: 'danger',
@@ -62,7 +62,7 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
       
       const result = await seriesService.deleteSeries(seriesId, userPhone);
       if (result.success) {
-        toast.success('漫剧已删除，关联的视频任务已取消');
+        toast.success('作品已删除，关联的视频任务已取消');
         onDelete(seriesId);
       } else {
         toast.error('删除失败：' + result.error);
@@ -72,7 +72,7 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
 
   const handleDownloadVideos = async (item: Series) => {
     if (!item.episodes || item.episodes.length === 0) {
-      toast.error('该漫剧还没有生成视频');
+      toast.error('该作品还没有生成视频');
       return;
     }
 
@@ -81,7 +81,7 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
     );
 
     if (completedVideos.length === 0) {
-      toast.error('该漫剧还没有已完成的视频，请先生成视频');
+      toast.error('该作品还没有已完成的视频，请先生成视频');
       return;
     }
 
@@ -189,7 +189,7 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
 
     if (item.characters && item.characters.length > 0) {
       text += `角色列表\n${'-'.repeat(20)}\n`;
-      item.characters.forEach((char: any) => {
+      item.characters.forEach((char: { name: string; description?: string; appearance?: string; personality?: string; role?: string; growthArc?: string }) => {
         text += `\n【${char.name}】\n`;
         text += `简介：${char.description}\n`;
         if (char.growthArc) text += `成长轨迹：${char.growthArc}\n`;
@@ -199,7 +199,7 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
 
     if (item.episodes && item.episodes.length > 0) {
       text += `剧集详情\n${'='.repeat(20)}\n\n`;
-      item.episodes.forEach((ep: any) => {
+      item.episodes.forEach((ep: { episodeNumber: number; title?: string; synopsis?: string; storyboards?: Array<{ description?: string; dialogue?: string }> }) => {
         text += `第${ep.episodeNumber}集：${ep.title}\n`;
         text += `${'-'.repeat(40)}\n`;
         text += `简介：${ep.synopsis}\n`;
@@ -208,7 +208,7 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
         
         if (ep.storyboards && ep.storyboards.length > 0) {
           text += `\n分镜场景：\n`;
-          ep.storyboards.forEach((scene: any, idx: number) => {
+          ep.storyboards.forEach((scene: { description?: string; dialogue?: string }, idx: number) => {
             text += `  ${idx + 1}. ${scene.description}\n`;
             if (scene.dialogue) text += `     对话：${scene.dialogue}\n`;
           });
@@ -254,7 +254,7 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
 
   ${item.characters && item.characters.length > 0 ? `
     <h2>角色列表</h2>
-    ${item.characters.map((char: any) => `
+    ${item.characters.map((char: { name: string; description?: string; appearance?: string; personality?: string; role?: string; growthArc?: string }) => `
       <div class="character">
         <h3>${char.name}</h3>
         <p>${char.description}</p>
@@ -265,7 +265,7 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
 
   ${item.episodes && item.episodes.length > 0 ? `
     <h2>剧集详情</h2>
-    ${item.episodes.map((ep: any) => `
+    ${item.episodes.map((ep: { episodeNumber: number; title?: string; synopsis?: string; storyboards?: Array<{ description?: string; dialogue?: string }> }) => `
       <div class="episode">
         <h3>第${ep.episodeNumber}集：${ep.title}</h3>
         <p><strong>简介：</strong>${ep.synopsis}</p>
@@ -274,7 +274,7 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
         
         ${ep.storyboards && ep.storyboards.length > 0 ? `
           <h4>分镜场景</h4>
-          ${ep.storyboards.map((scene: any, idx: number) => `
+          ${ep.storyboards.map((scene: { description?: string; dialogue?: string }, idx: number) => `
             <div class="scene">
               <strong>场景${idx + 1}：</strong>${scene.description}
               ${scene.dialogue ? `<br><strong>对话：</strong>${scene.dialogue}` : ''}
@@ -286,7 +286,7 @@ export function SeriesListView({ series, onEdit, onCreateNew, userPhone, onDelet
   ` : ''}
 
   <hr style="margin-top: 50px;">
-  <p style="text-align: center; color: #666;">AI漫剧创作系统生成 | ${new Date().toLocaleString()}</p>
+  <p style="text-align: center; color: #666;">AI影视创作系统生成 | ${new Date().toLocaleString()}</p>
 </body>
 </html>`;
   };

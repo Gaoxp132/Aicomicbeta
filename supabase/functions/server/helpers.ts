@@ -52,7 +52,7 @@ export function getCinematographyBlock(productionType?: string): string {
  * 1. [{episodeNumber, scenes: [...]}] — generate-full-ai批量格式
  * 2. [{sceneNumber, description, ...}] — generate-storyboards-ai单集格式
  */
-export function repairTruncatedStoryboardJSON(raw: string): { parsed: any | null; repaired: boolean; scenesRecovered: number } {
+export function repairTruncatedStoryboardJSON(raw: string): { parsed: ParsedScene[] | ParsedEpisode[] | unknown | null; repaired: boolean; scenesRecovered: number } {
   let cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
   
   // 先尝试直接解析
@@ -73,7 +73,7 @@ export function repairTruncatedStoryboardJSON(raw: string): { parsed: any | null
   if (cleaned.includes('"scenes"') || cleaned.includes('"episodeNumber"')) {
     try {
       // 找到所有完整的episode块
-      const episodes: any[] = [];
+      const episodes: ParsedEpisode[] = [];
       // 匹配 {"episodeNumber":N,"scenes":[ ... 的模式
       const epRegex = /\{"episodeNumber"\s*:\s*(\d+)[^}]*"scenes"\s*:\s*\[/g;
       let match;
@@ -167,8 +167,8 @@ export function repairTruncatedStoryboardJSON(raw: string): { parsed: any | null
 /**
  * 从一段可能不完整的JSON文本中提取所有完整的scene对象
  */
-function extractCompleteSceneObjects(chunk: string): any[] {
-  const scenes: any[] = [];
+function extractCompleteSceneObjects(chunk: string): ParsedScene[] {
+  const scenes: ParsedScene[] = [];
   // 找每个 {"sceneNumber" 的起始位置
   let searchFrom = 0;
   while (true) {
@@ -214,9 +214,9 @@ function extractCompleteSceneObjects(chunk: string): any[] {
  * 每个情感基调配备多套对白模板，随机选取避免重复，对白注重潜台词和性格差异
  */
 export function detectAndFillEmptyDialogues(
-  allSbRows: any[],
-  characterRows: any[],
-  episodeOutlines: any[]
+  allSbRows: StoryboardDialogueRow[],
+  characterRows: CharacterDialogueRow[],
+  episodeOutlines: EpisodeOutlineRow[]
 ): { filledCount: number; totalEmpty: number } {
   const hero = characterRows[0]?.name || '主角';
   const ally = characterRows[1]?.name || '配角';
@@ -269,7 +269,7 @@ export function detectAndFillEmptyDialogues(
   for (const row of allSbRows) {
     if (!row.dialogue || row.dialogue.trim().length < 3) {
       totalEmpty++;
-      const epOutline = episodeOutlines.find((ep: any) => ep.episodeNumber === row.episode_number);
+      const epOutline = episodeOutlines.find((ep: EpisodeOutlineRow) => ep.episodeNumber === row.episode_number);
       const epTitle = epOutline?.title || '这件事';
       const tone = row.emotional_tone || '';
       const sceneNum = row.scene_number || 1;
@@ -303,4 +303,39 @@ export function detectAndFillEmptyDialogues(
   }
 
   return { filledCount, totalEmpty };
+}
+
+/** Parsed scene object from JSON repair */
+interface ParsedScene {
+  sceneNumber?: number;
+  scene_number?: number;
+  description?: string;
+  dialogue?: string;
+  [key: string]: unknown;
+}
+
+/** Parsed episode with scenes from JSON repair */
+interface ParsedEpisode {
+  episodeNumber: number;
+  scenes: ParsedScene[];
+}
+
+/** Storyboard row shape used by detectAndFillEmptyDialogues */
+interface StoryboardDialogueRow {
+  dialogue?: string;
+  episode_number?: number;
+  emotional_tone?: string;
+  scene_number?: number;
+}
+
+/** Character row shape used by detectAndFillEmptyDialogues */
+interface CharacterDialogueRow {
+  name?: string;
+  personality?: string;
+}
+
+/** Episode outline shape used by detectAndFillEmptyDialogues */
+interface EpisodeOutlineRow {
+  episodeNumber?: number;
+  title?: string;
 }

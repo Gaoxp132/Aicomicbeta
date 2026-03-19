@@ -23,8 +23,45 @@ export function getErrorMessage(err: unknown): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// [A] API Client (was: apiClient.ts)
+// [0.1] Auto-defaults: 根据作品类型自动推断画面比例、分辨率、集数
 // ═══════════════════════════════════════════════════════════════════
+
+export interface AutoDefaults {
+  aspectRatio: string;
+  resolution: string;
+  episodeCount: number;
+}
+
+export function getAutoDefaults(productionType?: string): AutoDefaults {
+  switch (productionType) {
+    case 'brand_promo':
+    case 'product_promo':
+    case 'advertisement':
+      return { aspectRatio: '16:9', resolution: '720p', episodeCount: 1 };
+    case 'movie':
+    case 'documentary':
+      return { aspectRatio: '16:9', resolution: '720p', episodeCount: 1 };
+    case 'music_video':
+      return { aspectRatio: '9:16', resolution: '720p', episodeCount: 1 };
+    case 'tv_series':
+      return { aspectRatio: '16:9', resolution: '720p', episodeCount: 12 };
+    case 'micro_film':
+      return { aspectRatio: '16:9', resolution: '720p', episodeCount: 1 };
+    case 'comic_drama':
+    case 'short_drama':
+    default:
+      return { aspectRatio: '9:16', resolution: '720p', episodeCount: 6 };
+  }
+}
+
+/** Check if production type is a promo/ad type */
+export function isPromoType(productionType?: string): boolean {
+  return productionType === 'brand_promo' || productionType === 'product_promo' || productionType === 'advertisement';
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// [A] API Client (was: apiClient.ts)
+// ══════════════════════════════════════════════════════════════════
 
 // Network status tracking
 let _edgeFunctionReachable = true;
@@ -45,11 +82,22 @@ function markNetworkFailure(): void {
 
 interface ApiRequestOptions {
   method?: string;
-  body?: any;
+  body?: unknown;
   headers?: Record<string, string>;
   timeout?: number;
   maxRetries?: number;
   silent?: boolean;
+}
+
+/**
+ * API 通用返回类型 — data 形状因端点而异，使用 index signature 兼容后端动态字段
+ * data 使用 Record<string, unknown> 允许属性访问但返回 unknown，强制调用方窄化
+ */
+export type ApiResult = { success: boolean; data?: Record<string, unknown>; error?: string; [key: string]: unknown };
+
+/** Type-safe accessor for ApiResult.data — avoids scattered `as` casts at call sites */
+export function getResultData<T>(result: ApiResult): T | undefined {
+  return result.data as T | undefined;
 }
 
 /**
@@ -58,7 +106,7 @@ interface ApiRequestOptions {
 export async function apiRequest(
   endpoint: string,
   options: ApiRequestOptions = {}
-): Promise<{ success: boolean; data?: any; error?: string; [key: string]: any }> {
+): Promise<ApiResult> {
   const {
     method = 'GET',
     body,
@@ -101,7 +149,7 @@ export async function apiRequest(
 
       // Parse response
       const contentType = response.headers.get('content-type') || '';
-      let data: any;
+      let data: unknown;
 
       if (contentType.includes('application/json')) {
         data = await response.json();
@@ -112,7 +160,8 @@ export async function apiRequest(
 
       if (!response.ok) {
         // Return structured error for non-2xx responses
-        const errorMessage = data?.error || data?.message || `HTTP ${response.status}`;
+        const dataObj = (typeof data === 'object' && data !== null ? data : {}) as Record<string, unknown>;
+        const errorMessage = String(dataObj.error || dataObj.message || `HTTP ${response.status}`);
         if (!silent) {
           console.error(`[apiRequest] ${method} ${endpoint} → ${response.status}:`, errorMessage);
         }
@@ -120,16 +169,16 @@ export async function apiRequest(
           success: false,
           error: errorMessage,
           status: response.status,
-          ...(typeof data === 'object' && data !== null ? data : {}),
+          ...dataObj,
         };
       }
 
       // Handle success — some endpoints return { success, data, ... } wrapper
       if (typeof data === 'object' && data !== null && 'success' in data) {
-        return data;
+        return data as ApiResult;
       }
 
-      return { success: true, data };
+      return { success: true, data: (typeof data === 'object' && data !== null ? data : { _raw: data }) as Record<string, unknown> };
     } catch (err: unknown) {
       lastError = err instanceof Error ? err : new Error(String(err));
 
@@ -164,7 +213,7 @@ export async function apiRequest(
 export async function apiGet(
   endpoint: string,
   options: Omit<ApiRequestOptions, 'method' | 'body'> = {}
-): Promise<{ success: boolean; data?: any; error?: string; [key: string]: any }> {
+): Promise<ApiResult> {
   return apiRequest(endpoint, { ...options, method: 'GET' });
 }
 
@@ -173,9 +222,9 @@ export async function apiGet(
  */
 export async function apiPost(
   endpoint: string,
-  body?: any,
+  body?: unknown,
   options: Omit<ApiRequestOptions, 'method' | 'body'> = {}
-): Promise<{ success: boolean; data?: any; error?: string; [key: string]: any }> {
+): Promise<ApiResult> {
   return apiRequest(endpoint, { ...options, method: 'POST', body });
 }
 
@@ -184,9 +233,9 @@ export async function apiPost(
  */
 export async function apiDelete(
   endpoint: string,
-  body?: any,
+  body?: unknown,
   options: Omit<ApiRequestOptions, 'method' | 'body'> = {}
-): Promise<{ success: boolean; data?: any; error?: string; [key: string]: any }> {
+): Promise<ApiResult> {
   return apiRequest(endpoint, { ...options, method: 'DELETE', body });
 }
 
@@ -195,9 +244,9 @@ export async function apiDelete(
  */
 export async function apiPut(
   endpoint: string,
-  body?: any,
+  body?: unknown,
   options: Omit<ApiRequestOptions, 'method' | 'body'> = {}
-): Promise<{ success: boolean; data?: any; error?: string; [key: string]: any }> {
+): Promise<ApiResult> {
   return apiRequest(endpoint, { ...options, method: 'PUT', body });
 }
 
@@ -208,7 +257,7 @@ export async function apiUpload(
   endpoint: string,
   formData: FormData,
   options: Omit<ApiRequestOptions, 'method' | 'body'> = {}
-): Promise<{ success: boolean; data?: any; error?: string; [key: string]: any }> {
+): Promise<ApiResult> {
   return apiRequest(endpoint, {
     ...options,
     method: 'POST',
@@ -352,10 +401,28 @@ export function getAspectCssValue(aspectRatio?: string): string {
   return aspectRatio.replace(':', '/');
 }
 
+/** API 原始作品数据（双命名兼容，支持 camelCase / snake_case） */
+export interface RawWork {
+  [key: string]: unknown;
+  id?: string; task_id?: string; title?: string; prompt?: string;
+  style?: string; thumbnail?: string; thumbnailUrl?: string; image_url?: string;
+  videoUrl?: string; video_url?: string; duration?: string;
+  createdAt?: string; created_at?: string;
+  status?: string; metadata?: Record<string, unknown> | null; generation_metadata?: Record<string, unknown> | null;
+  likes?: number; like_count?: number; views?: number; view_count?: number;
+  shares?: number; share_count?: number; comments?: number; comment_count?: number;
+  userPhone?: string; user_phone?: string; userNickname?: string; user_nickname?: string;
+  aspectRatio?: string; aspect_ratio?: string;
+  taskId?: string; imageUrls?: string[]; image_urls?: string[];
+  resolution?: string; fps?: number; enableAudio?: boolean; model?: string;
+  seriesId?: string; series_id?: string;
+  type?: string;
+}
+
 /**
  * Normalize raw works array from API
  */
-export function normalizeWorks(works: any[]): any[] {
+export function normalizeWorks(works: RawWork[]): RawWork[] {
   if (!Array.isArray(works)) return [];
   return works.map(work => ({
     ...work,
@@ -381,7 +448,7 @@ export function normalizeWorks(works: any[]): any[] {
 /**
  * Convert a raw work object to Comic type for ImmersiveVideoViewer
  */
-export function convertWorkToComic(work: any): Comic {
+export function convertWorkToComic(work: RawWork): Comic {
   return {
     id: work.id || work.task_id || '',
     title: work.title || work.prompt || '无标题',
@@ -428,4 +495,17 @@ export function sbImageUrl(sb: Storyboard): string {
 
 export function epMergedVideoUrl(ep: Episode): string {
   return ep.mergedVideoUrl || (ep as RawEpisode).merged_video_url || '';
+}
+
+/**
+ * 智能推断 episode 的实际状态：
+ * 如果有合并视频或所有分镜都有 videoUrl，视为 completed
+ */
+export function getEffectiveEpisodeStatus(ep: Episode): string {
+  if (ep.status === 'completed') return 'completed';
+  const merged = epMergedVideoUrl(ep);
+  if (merged && merged.trim().length > 0) return 'completed';
+  const sbs = ep.storyboards;
+  if (sbs && sbs.length > 0 && sbs.every(sb => sb.videoUrl)) return 'completed';
+  return ep.status;
 }

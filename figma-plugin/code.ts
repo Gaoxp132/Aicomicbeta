@@ -31,12 +31,13 @@ async function handleCreateSeries(data: { title: string; description: string }) 
       data: result
     });
 
-    figma.notify('🎉 漫剧创建成功！');
-  } catch (error: any) {
+    figma.notify('🎉 作品创建成功！');
+  } catch (error: unknown) {
     console.error('[Figma Plugin] Create series error:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     figma.ui.postMessage({
       type: 'error',
-      message: `创建失败: ${error.message}`
+      message: `创建失败: ${errMsg}`
     });
     figma.notify('❌ 创建失败', { error: true });
   }

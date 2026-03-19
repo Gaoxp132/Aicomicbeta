@@ -21,14 +21,15 @@ function FormatBadge({ label, count, variant }: { label: string; count: number; 
   const colors = { gray: 'bg-gray-700/50 text-gray-400', green: 'bg-green-500/10 text-green-400', yellow: 'bg-amber-500/10 text-amber-400', red: 'bg-red-500/10 text-red-400' };
   return (<div className={`rounded px-2 py-1.5 text-center ${colors[variant]}`}><div className="font-bold text-sm">{count}</div><div className="text-[10px] opacity-70">{label}</div></div>);
 }
-interface DataHealthReport { summary: { totalEpisodes: number; uniqueEpisodeSlots: number; duplicateGroups: number; duplicateRows: number; sbTotalRows: number; sbDuplicateGroups: number; sbDuplicateRows: number; orphanedSeriesCount: number; orphanedEpisodeCount: number }; mergedVideoUrlFormats: Record<string, number>; duplicateEpisodes: any[]; orphanedEpisodes: any[] }
-interface CleanupResult { summary: { dryRun: boolean; deletedEpisodes: number; deletedStoryboards: number; fixedMergedUrls: number; deletedOrphans: number; wouldDeleteEpisodes: number; wouldDeleteStoryboards: number; totalActions: number }; actions: any[] }
+interface DataHealthReport { summary: { totalEpisodes: number; uniqueEpisodeSlots: number; duplicateGroups: number; duplicateRows: number; sbTotalRows: number; sbDuplicateGroups: number; sbDuplicateRows: number; orphanedSeriesCount: number; orphanedEpisodeCount: number }; mergedVideoUrlFormats: Record<string, number>; duplicateEpisodes: { key: string; count: number; episodes: { title?: string; status?: string }[] }[]; orphanedEpisodes: { id: string; title?: string }[] }
+interface CleanupResult { summary: { dryRun: boolean; deletedEpisodes: number; deletedStoryboards: number; fixedMergedUrls: number; deletedOrphans: number; wouldDeleteEpisodes: number; wouldDeleteStoryboards: number; totalActions: number }; actions: { type: string; detail?: string }[] }
+interface RebuildResult { rebuilt: number; skipped: number; failed: number }
 
 function DataCleanupPanel() {
   const [isLoading, setIsLoading] = useState(false);
   const [healthReport, setHealthReport] = useState<DataHealthReport | null>(null);
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null);
-  const [rebuildResult, setRebuildResult] = useState<any>(null);
+  const [rebuildResult, setRebuildResult] = useState<RebuildResult | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [activeAction, setActiveAction] = useState<string | null>(null);
   // v6.0.178: 二次确认弹窗替代原生 confirm()
@@ -36,13 +37,13 @@ function DataCleanupPanel() {
 
   const runDiagnostics = async () => {
     setIsLoading(true); setActiveAction('diagnose'); setHealthReport(null); setCleanupResult(null); setRebuildResult(null);
-    try { const result = await apiRequest<DataHealthReport>('/admin/data-health', { method: 'GET', timeout: 30000 }); if (result.success && result.data) { setHealthReport(result.data); const s = result.data.summary; if (s.duplicateRows === 0 && s.sbDuplicateRows === 0 && s.orphanedEpisodeCount === 0) toast.success('数据健康，无重复或孤儿数据'); else toast.warning(`发现 ${s.duplicateRows} 条重复剧集 + ${s.sbDuplicateRows} 条重复分镜`); } else toast.error('诊断失败: ' + (result.error || '未知错误')); }
+    try { const result = await apiRequest('/admin/data-health', { method: 'GET', timeout: 30000 }); if (result.success && result.data) { setHealthReport(result.data); const s = result.data.summary; if (s.duplicateRows === 0 && s.sbDuplicateRows === 0 && s.orphanedEpisodeCount === 0) toast.success('数据健康，无重复或孤儿数据'); else toast.warning(`发现 ${s.duplicateRows} 条重复剧集 + ${s.sbDuplicateRows} 条重复分镜`); } else toast.error('诊断失败: ' + (result.error || '未知错误')); }
     catch (error: unknown) { toast.error('诊断请求失败: ' + getErrorMessage(error)); }
     finally { setIsLoading(false); setActiveAction(null); }
   };
   const previewCleanup = async () => {
     setIsLoading(true); setActiveAction('preview'); setCleanupResult(null);
-    try { const result = await apiRequest<CleanupResult>('/admin/cleanup-duplicates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dryRun: true, fixMergedUrls: false, cleanOrphans: false }), timeout: 60000 }); if (result.success && result.data) { setCleanupResult(result.data); toast.info(`预览: 将删除 ${result.data.summary.wouldDeleteEpisodes} 条重复剧集, ${result.data.summary.wouldDeleteStoryboards} 条重复分镜`); } else toast.error('预览失败: ' + (result.error || '未知错误')); }
+    try { const result = await apiRequest('/admin/cleanup-duplicates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dryRun: true, fixMergedUrls: false, cleanOrphans: false }), timeout: 60000 }); if (result.success && result.data) { setCleanupResult(result.data); toast.info(`预览: 将删除 ${result.data.summary.wouldDeleteEpisodes} 条重复剧集, ${result.data.summary.wouldDeleteStoryboards} 条重复分镜`); } else toast.error('预览失败: ' + (result.error || '未知错误')); }
     catch (error: unknown) { toast.error('预览请求失败: ' + getErrorMessage(error)); }
     finally { setIsLoading(false); setActiveAction(null); }
   };
@@ -59,7 +60,7 @@ function DataCleanupPanel() {
     });
     if (!confirmed) return;
     setIsLoading(true); setActiveAction('execute');
-    try { const result = await apiRequest<CleanupResult>('/admin/cleanup-duplicates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dryRun: false, fixMergedUrls: options.fixMergedUrls, cleanOrphans: options.cleanOrphans }), timeout: 120000 }); if (result.success && result.data) { setCleanupResult(result.data); const s = result.data.summary; toast.success(`清理完成: 删除 ${s.deletedEpisodes} 条重复剧集, ${s.deletedStoryboards} 条重复镜, 修复 ${s.fixedMergedUrls} 条URL`); setTimeout(runDiagnostics, 1000); } else toast.error('清理失败: ' + (result.error || '未知错误')); }
+    try { const result = await apiRequest('/admin/cleanup-duplicates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dryRun: false, fixMergedUrls: options.fixMergedUrls, cleanOrphans: options.cleanOrphans }), timeout: 120000 }); if (result.success && result.data) { setCleanupResult(result.data); const s = result.data.summary; toast.success(`清理完成: 删除 ${s.deletedEpisodes} 条重复剧集, ${s.deletedStoryboards} 条重复镜, 修复 ${s.fixedMergedUrls} 条URL`); setTimeout(runDiagnostics, 1000); } else toast.error('清理失败: ' + (result.error || '未知错误')); }
     catch (error: unknown) { toast.error('清理请求失败: ' + getErrorMessage(error)); }
     finally { setIsLoading(false); setActiveAction(null); }
   };
@@ -115,7 +116,7 @@ function DataCleanupPanel() {
               {healthReport.duplicateEpisodes.length > 0 && (
                 <div>
                   <button onClick={() => setShowDetails(!showDetails)} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-300 transition-colors">{showDetails ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}{showDetails ? '收起' : '展开'}重复详情 ({healthReport.duplicateEpisodes.length} 组)</button>
-                  <AnimatePresence>{showDetails && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-2 space-y-2 max-h-60 overflow-y-auto">{healthReport.duplicateEpisodes.slice(0, 20).map((group, i) => <div key={i} className="bg-gray-900/50 rounded-lg p-2.5 text-xs"><div className="flex items-center justify-between mb-1.5"><span className="text-gray-300 font-mono">{group.key}</span><span className="text-red-400 font-medium">{group.count} 条重复</span></div><div className="space-y-1">{group.episodes.map((ep: any, j: number) => <div key={j} className={`flex items-center justify-between px-2 py-1 rounded ${j === 0 ? 'bg-green-500/10 border border-green-500/20' : 'bg-red-500/5'}`}><span className="text-gray-400 truncate max-w-[140px]">{ep.title || '无标题'}</span><div className="flex items-center gap-2"><span className={`px-1.5 py-0.5 rounded text-[10px] ${ep.status === 'completed' ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>{ep.status}</span>{j === 0 && <span className="text-green-400 text-[10px]">保留</span>}{j > 0 && <span className="text-red-400 text-[10px]">删除</span>}</div></div>)}</div></div>)}</motion.div>}</AnimatePresence>
+                  <AnimatePresence>{showDetails && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-2 space-y-2 max-h-60 overflow-y-auto">{healthReport.duplicateEpisodes.slice(0, 20).map((group, i) => <div key={i} className="bg-gray-900/50 rounded-lg p-2.5 text-xs"><div className="flex items-center justify-between mb-1.5"><span className="text-gray-300 font-mono">{group.key}</span><span className="text-red-400 font-medium">{group.count} 条重复</span></div><div className="space-y-1">{group.episodes.map((ep: { title?: string; status?: string }, j: number) => <div key={j} className={`flex items-center justify-between px-2 py-1 rounded ${j === 0 ? 'bg-green-500/10 border border-green-500/20' : 'bg-red-500/5'}`}><span className="text-gray-400 truncate max-w-[140px]">{ep.title || '无标题'}</span><div className="flex items-center gap-2"><span className={`px-1.5 py-0.5 rounded text-[10px] ${ep.status === 'completed' ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>{ep.status}</span>{j === 0 && <span className="text-green-400 text-[10px]">保留</span>}{j > 0 && <span className="text-red-400 text-[10px]">删除</span>}</div></div>)}</div></div>)}</motion.div>}</AnimatePresence>
                 </div>
               )}
             </div>
@@ -359,7 +360,7 @@ export function SettingsDialog({ isOpen, onClose, userPhone, onLogout }: Setting
                 {/* 版本信息 */}
                 <div className="pt-4 border-t border-gray-700">
                   <p className="text-center text-xs text-gray-500">
-                    AI漫剧创作 v{APP_VERSION}
+                    AI影视创作 v{APP_VERSION}
                   </p>
                   <p className="text-center text-xs text-gray-600 mt-1">
                     &copy; 2026 All rights reserved

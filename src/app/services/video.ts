@@ -4,6 +4,7 @@
  */
 
 import { apiRequest, apiPost, getVideoCodecPreference } from '../utils';
+import type { ApiResult } from '../utils';
 import { getErrorMessage } from '../utils';
 import type { Series, Episode, Storyboard } from '../types';
 import { updateSeries } from './series';
@@ -21,12 +22,12 @@ export async function mergeEpisodeVideos(
   seriesId: string,
   episodeId: string,
   userPhone?: string
-): Promise<{ success: boolean; data?: any; videoUrl?: string; error?: string }> {
+): Promise<ApiResult & { videoUrl?: string }> {
   const result = await apiPost(`/episodes/${episodeId}/merge-videos`, userPhone ? { userPhone } : {}, { timeout: 300_000, maxRetries: 1 });
   if (result.success) {
     // v6.0.105: 服务器 HTTP 200 + success:false 时 apiRequest 透传整个对象
     // 此处需检查 result.data 是否含有 mergedVideoUrl（真正的成功）
-    const videoUrl = result.data?.mergedVideoUrl || result.data?.videoUrls?.[0];
+    const videoUrl = String(result.data?.mergedVideoUrl || (result.data?.videoUrls as string[] | undefined)?.[0] || '');
     if (videoUrl) return { success: true, data: result.data, videoUrl };
   }
 
@@ -44,13 +45,13 @@ export async function mergeEpisodeVideos(
   let errorStr = result.error || '合并失败';
 
   // v6.0.96/105: HTTP 546 WORKER_LIMIT → 标记 useClientMerge 以便自动回退
-  if (errorStr.includes('546') || errorStr.includes('WORKER_LIMIT') || errorStr.includes('compute resources')) {
+  if (errorStr.includes('546') || errorStr.includes('WORKER_LIMIT') || errorStr.includes('compute resources') || errorStr.includes('Memory limit') || errorStr.includes('memory limit')) {
     console.warn('[VideoMerger] WORKER_LIMIT: Edge Function OOM/CPU exceeded — will fallback to client merge');
     return { success: false, data: { useClientMerge: true }, error: '服务器资源不足，将自动使用本地合并' };
   }
 
   // v6.0.69: 解析分辨率不一致的结构化错误信息
-  let parsedData: any = null;
+  let parsedData: Record<string, unknown> | null = null;
   try {
     const jsonMatch = errorStr.match(/HTTP \d+:\s*(.+)/s);
     if (jsonMatch) {
@@ -88,11 +89,11 @@ export async function mergeAllSeriesVideos(
     const data = result.data || {};
     return {
       success: true,
-      mergedCount: data.mergedCount || 0,
-      failedCount: data.failedCount || 0,
-      errors: data.errors || [],
-      skippedEpisodes: data.skippedEpisodes || [],
-      useClientMerge: data.useClientMerge || false,
+      mergedCount: Number(data.mergedCount || 0),
+      failedCount: Number(data.failedCount || 0),
+      errors: (data.errors || []) as string[],
+      skippedEpisodes: (data.skippedEpisodes || []) as number[],
+      useClientMerge: Boolean(data.useClientMerge || false),
     };
   }
   console.error('[VideoMerger] Error:', result.error);
@@ -102,7 +103,7 @@ export async function mergeAllSeriesVideos(
 export async function repairEpisodeVideo(
   episodeId: string,
   userPhone: string
-): Promise<{ success: boolean; data?: any; error?: string }> {
+): Promise<ApiResult> {
   const result = await apiPost(`/episodes/${episodeId}/repair-video`, { userPhone }, { timeout: 180_000, maxRetries: 1 });
   if (result.success) return { success: true, data: result.data };
   console.error('[VideoMerger] Repair error:', result.error);
@@ -139,10 +140,9 @@ export async function fetchExistingVideoTasks(seriesId: string): Promise<Map<str
   try {
     const result = await apiRequest(`/series/${seriesId}/video-task-status`, { method: 'GET', timeout: 15000, maxRetries: 1, silent: true });
     if (result.success && result.storyboardTasks) {
-      const tasks: Record<string, any> = result.storyboardTasks;
+      const tasks = result.storyboardTasks as Record<string, Record<string, unknown>>;
       for (const [sbId, task] of Object.entries(tasks)) {
-        const t = task as Record<string, any>;
-        taskMap.set(sbId, { taskId: t.taskId || '', status: t.status || 'unknown', videoUrl: t.videoUrl || '', episodeNumber: t.episodeNumber, sceneNumber: t.sceneNumber });
+        taskMap.set(sbId, { taskId: String(task.taskId || ''), status: String(task.status || 'unknown'), videoUrl: String(task.videoUrl || ''), episodeNumber: task.episodeNumber as number | undefined, sceneNumber: task.sceneNumber as number | undefined });
       }
       console.log(`[BatchVideo] 📋 Pre-check: ${taskMap.size} storyboards already have tasks`);
     }
@@ -215,8 +215,10 @@ export async function generateAllVideosForSeries(
   await syncBatchProgressToDatabase(series.id, progress);
 
   try {
-    for (let i = 0; i < series.episodes.length; i++) {
-      const episode = series.episodes[i];
+    // v6.0.200: 按 episodeNumber 排序，确保跨集首尾帧衔接
+    const sortedEpisodes = [...series.episodes].sort((a, b) => (a.episodeNumber || 0) - (b.episodeNumber || 0));
+    for (let i = 0; i < sortedEpisodes.length; i++) {
+      const episode = sortedEpisodes[i];
       progress.currentEpisode = i + 1;
 
       const result = await generateVideosForEpisode(series, episode, userPhone, existingTasks, (sp) => {
@@ -272,7 +274,8 @@ async function generateVideosForEpisode(
   existingTasks: Map<string, ExistingStoryboardTask>,
   onProgress?: (progress: { completed: number; failed: number; skipped: number; total: number }) => void
 ): Promise<{ success: boolean; error?: string }> {
-  const storyboards = episode.storyboards || [];
+  // v6.0.200: 必须按 sceneNumber 排序，确保按顺序生成（后端依赖前一场景视频尾帧）
+  const storyboards = [...(episode.storyboards || [])].sort((a, b) => (a.sceneNumber || 0) - (b.sceneNumber || 0));
   let completed = 0, failed = 0, skipped = 0;
   const maxRetries = 3; // v6.0.84: 2→3次重试（Volcengine北京端点TCP超时较多）
   let consecutiveNetworkFails = 0;
@@ -358,7 +361,7 @@ async function generateVideoForStoryboard(
       method: 'POST',
       body: JSON.stringify({
         prompt,
-        title: `${series.title || '漫剧'}-E${episode.episodeNumber || 1}-场景${storyboard.sceneNumber || 1}`,
+        title: `${series.title || '作品'}-E${episode.episodeNumber || 1}-场景${storyboard.sceneNumber || 1}`,
         style: series.style || 'realistic',
         duration: storyboard.duration?.toString() || '10',
         userPhone,
@@ -373,16 +376,38 @@ async function generateVideoForStoryboard(
         codec: getVideoCodecPreference(), // v6.0.76: 自动注入用户编码偏好
         aspectRatio: series.coherenceCheck?.aspectRatio || undefined, // v6.0.84: 显式传递比例（后端也从coherence_check读取，双保险）
       }),
-      timeout: 150000,
+      timeout: 120000,
       maxRetries: 1,
     });
 
     if (result.success) {
-      const taskId = result.local_task_id || result.taskId || result.task_id;
+      const taskId = String(result.local_task_id || result.taskId || result.task_id || '');
       if (!taskId) return { success: false, error: 'No task ID returned from server' };
       const isDuplicate = !!result.duplicate;
-      const existingVideoUrl = result.existingVideoUrl || '';
-      return { success: true, taskId, duplicate: isDuplicate, existingVideoUrl };
+      const existingVideoUrl = String(result.existingVideoUrl || '');
+
+      // v6.0.200: 提交后轮询等待视频生成完成（而非fire-and-forget）
+      // 根因: 一键生成需要严格按场景顺序完成，后端才能提取前一场景视频尾帧
+      // 作为下一场景的i2v参考图，实现场景间首尾帧严格一致
+      if (isDuplicate && existingVideoUrl?.startsWith('http')) {
+        return { success: true, taskId, duplicate: true, existingVideoUrl };
+      }
+
+      try {
+        // 轮询120次 × 8s ≈ 16分钟，与 generateStoryboardVideo 一致
+        const pollResult = await pollTaskStatus(taskId, undefined, 120, 8000);
+        if (pollResult.status === 'timeout') {
+          console.warn(`[BatchVideo] ⏳ Poll timeout for task ${taskId}, task still processing in background`);
+          return { success: true, taskId };
+        }
+        if (pollResult.videoUrl) {
+          return { success: true, taskId, existingVideoUrl: pollResult.videoUrl };
+        }
+        return { success: true, taskId };
+      } catch (pollErr: unknown) {
+        console.warn(`[BatchVideo] Poll error for task ${taskId} (non-blocking):`, getErrorMessage(pollErr));
+        return { success: true, taskId };
+      }
     }
 
     return { success: false, error: result.error || 'Failed to create video task' };
@@ -429,11 +454,14 @@ export async function generateStoryboardVideo(
 
   const richPrompt = buildStoryboardPrompt(storyboard);
   const taskParams = {
-    prompt: richPrompt, style: 'comic' as string, duration: String(storyboard.duration || 10), userPhone,
+    prompt: richPrompt, style: 'realistic' as string, duration: String(storyboard.duration || 10), userPhone,
     title: storyboard.description?.substring(0, 100) || `场景${storyboard.sceneNumber || 1}视频`,
     seriesId, storyboardId: storyboard.id, episodeNumber, storyboardNumber: storyboard.sceneNumber,
     enableAudio: true, resolution: '720p', fps: 24, // v6.0.79: 实际分辨率和比例由后端从series.coherence_check统一读取
-    ...(storyboard.imageUrl ? { imageUrls: [storyboard.imageUrl] } : {}),
+    // v6.0.196: 永远不传storyboard的AI预览图作为i2v参考
+    // 根因: storyboard.imageUrl是AI生成的预览图，可能来自旧���本/旧生成版本
+    // i2v模式下Seedance完全跟随参考图内容，忽略文字prompt，导致视频与描述完全不符
+    // 场景间视觉连贯性由后端自动注入前序场景末帧来保障，无需前端传图
     ...(forceRegenerate ? { forceRegenerate: true } : {}), // v6.0.87
   };
 

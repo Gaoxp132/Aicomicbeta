@@ -13,10 +13,20 @@ export function buildEpisodeOutlinePrompt(params: {
   ptLabel: string;
   ptNarrative: string;
   totalEpisodes: number;
-  series: { title: string; description?: string; genre?: string; theme?: string; story_outline?: string };
+  series: { title: string; description?: string; genre?: string; theme?: string; story_outline?: string; coherence_check?: Record<string, unknown> | null };
   creativeSeed: { archetype: string; motif: string; cultural: string };
 }): string {
   const { ptLabel, ptNarrative, totalEpisodes, series, creativeSeed } = params;
+
+  // v6.0.90: 品牌/产品宣传片使用专属提示词
+  const cc = series.coherence_check || {};
+  const productionType = (cc.productionType as string) || '';
+  const isPromo = productionType === 'brand_promo' || productionType === 'product_promo' || productionType === 'advertisement';
+
+  if (isPromo) {
+    return buildPromoOutlinePrompt({ ptLabel, ptNarrative, totalEpisodes, series, cc });
+  }
+
   const lines = [
     `你是一位兼具文学素养与商业嗅觉的顶级${ptLabel}编剧。你的作品曾让观众在深夜追完全集后久久不能入睡——不是因为恐惧，而是因为那些角色的命运像针一样扎在心里拔不出来。现在请为这部${ptLabel}创作${totalEpisodes}集的详细大纲。`,
     ``,
@@ -34,7 +44,7 @@ export function buildEpisodeOutlinePrompt(params: {
     `（以上三个维度是你这次创作的独特基因。不是生搬硬套，而是让它们像盐溶于水般融入故事——观众感受得到味道，但看不见盐粒。）`,
     ``,
     `【语言要求——最高优先级】`,
-    `所有输出内容必须使用中文！包括title、synopsis、growthTheme、keyMoments、cliffhanger、previousEpisodeLink等所有JSON字段的值，全部使用中文书写。严禁出现英文内容（角色名如为英文原名则保留）。这是面向中文用户的作品，每一个字都必须是中文。`,
+    `所有输出内容必须使用中文！包括title、synopsis、growthTheme、keyMoments、cliffhanger、previousEpisodeLink等所有JSON字段的值，全部使用中文书写。严禁出现英文内容（角色名如为英文原名则保留）。这是面向中文用户的作��，每一个字都必须是中文。`,
     ``,
     `请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：`,
     `[{"episodeNumber":1,"title":"集标题(4-8字,像一首诗的标题——既有画面感又藏悬念,如'雨中的第七封信'而非'真相大白')","synopsis":"80-120字简介,必须含:本集核心事件+具体角色名+关键转折+情感高潮。写法要求：用'某人做了某事导致某后果'的因果链叙述，禁止'开始了新的旅程''面临着挑战'等空话","growthTheme":"本集主题(不超过6字)","keyMoments":["具体场景1(含角色名+动作+情感反应,如'林晚发现父亲的日记本藏在假墙后,双手颤抖地翻开第一页')","具体场景2"],"cliffhanger":"本集结尾的具体悬念画面(20-30字,必须是一个冻结的画面——如'她拨通了那个十年未打的号码,听到的却是自己的声音')","previousEpisodeLink":"本集开头如何承接上集(第1集写开端背景)"}]`,
@@ -90,7 +100,113 @@ export function buildEpisodeOutlinePrompt(params: {
     `6.cliffhanger字段:最后1集写"故事完结",其余集写具体悬念画面`,
     ``,
     `十、【终极检验】`,
-    `写完后自问：如果把角色名字遮住，能分得清谁是谁吗？如果把集标题遮住，能猜出是哪一集吗？如果答案是"不能"，说明你的创作还不够独特。`,
+    `写完后自问：如果把角色名字遮住，能分得清谁是谁吗？如果把集标题遮住，能猜出是哪一���吗？如果答案是"不能"，说明你的创作还不够独特。`,
+  ].filter(Boolean).join('\n');
+  return lines;
+}
+
+
+// ============================================================
+// 1b. 品牌/产品宣传片专属 Prompt 构建器 (v6.0.90)
+// ============================================================
+function buildPromoOutlinePrompt(params: {
+  ptLabel: string;
+  ptNarrative: string;
+  totalEpisodes: number;
+  series: { title: string; description?: string; genre?: string; theme?: string; story_outline?: string };
+  cc: Record<string, unknown>;
+}): string {
+  const { ptLabel, ptNarrative, totalEpisodes, series, cc } = params;
+  const brandName = (cc.brandName as string) || series.title || '';
+  const slogan = (cc.slogan as string) || '';
+  const sellingPoints = (cc.sellingPoints as string[]) || [];
+  const promoTone = (cc.promoTone as string) || 'cinematic';
+  const callToAction = (cc.callToAction as string) || '';
+  const targetAudience = (cc.targetAudience as string) || '';
+  const isProduct = (cc.productionType as string) === 'product_promo';
+
+  const toneMap: Record<string, string> = {
+    luxury: '高端奢华——每一帧都散发着Cartier广告般的极致质感，光影如流金，节奏如呼吸',
+    tech: '科技前沿——Apple发布会式的简洁力量，用最少的画面传递最大的冲击',
+    warm: '温暖人文——像NHK纪录片般的细腻触感，用真实细节打动人心',
+    energetic: '活力动感——Nike式的肾上腺素飙升，节奏明快，画面充满张力',
+    minimal: '极简高级——无印良品式的留白美学，少即是多，沉默比喧嚣更有力',
+    cinematic: '电影质感——像Ridley Scott执导的大片，每个镜头都可以截图做海报',
+    documentary: '纪实叙述——BBC级别的深度呈现，真实故事的力量胜过一切修饰',
+    playful: '趣味创意——Old Spice式的出人意料，让观众在笑声中记住品牌',
+  };
+
+  const lines = [
+    `你是世界顶级${ptLabel}创意总监，曾为Apple、Nike、Louis Vuitton、华为、蔚来等世界一流品牌操刀过震撼全球的宣传片。你深信：一支伟大的${isProduct ? '产品' : '品牌'}宣传片，不是在"介绍"${isProduct ? '产品' : '品牌'}，而是在"定义"一种新的生活方式和价值主张。`,
+    ``,
+    `现在请为以下${isProduct ? '产品' : '品牌'}创作${totalEpisodes}段${ptLabel}的详细分段脚本。`,
+    ``,
+    `${isProduct ? '产品' : '品牌'}名称：${brandName}`,
+    `${isProduct ? '产品' : '品牌'}描述：${series.description || '未提供'}`,
+    slogan ? `广告语/Slogan：${slogan}` : '',
+    sellingPoints.length > 0 ? `核心卖点：${sellingPoints.join('、')}` : '',
+    targetAudience ? `目标受众：${targetAudience}` : '',
+    callToAction ? `行动号召(CTA)：${callToAction}` : '',
+    series.story_outline ? `创意描述：${(series.story_outline || '').substring(0, 800)}` : '',
+    ``,
+    `视觉调性：${toneMap[promoTone] || toneMap.cinematic}`,
+    `叙事规范：${ptNarrative}`,
+    ``,
+    `【语言要求——最高优先级】`,
+    `所有输出内容必须使用中文！这是面向中文用户的作品。`,
+    ``,
+    `请严格按以下JSON格式回复（不要包含markdown标记），返回一个数组：`,
+    `[{"episodeNumber":1,"title":"段落标题(2-6字,如'源起'/'锋芒'/'新生')","synopsis":"80-120字脚本描述,必须包含:①开场画面(精确到镜头语言)②核心展示内容③情感递进节奏④结尾定格画面。用画面语言写，不用抽象描述","growthTheme":"本段主题(不超过6字,如'匠心传承'/'科技之美')","keyMoments":["具体画面1(含镜头描述,如'微距镜头缓缓推过产品表面纹理,金属光泽在侧光下流动如水')","具体画面2"],"cliffhanger":"本段结尾画面(最后一段写品牌Logo+Slogan定格)","previousEpisodeLink":"本段开头如何承接(第1段写开场方式)"}]`,
+    ``,
+    `【世界一流${ptLabel}的创作铁律】`,
+    ``,
+    `一、【开场3秒决定一切】`,
+    `第一段开场必须在3秒内抓住注意力：`,
+    `- 可以是一个出人意料的画面（从极微观到极宏观的一个镜头拉伸）`,
+    `- 可以是一句直击灵魂的旁白（如"在你翻开这页之前，世界不是这样的"）`,
+    `- 可以是一个让人屏住呼吸的视觉奇观（延时摄影/航拍/微距的极致运用）`,
+    `- 严禁：公司大楼外景开场/创始人正襟危坐/产品平铺直叙展示`,
+    ``,
+    `二、【每一帧都是广告牌】`,
+    `宣传片的每一个画面都要达到可以截图做海报的水准：`,
+    `- 构图必须有电影级的美感（对称/黄金分割/引导线/框架构图）`,
+    `- 光影必须有情感（清晨侧光=希望/逆光剪影=力量/暖色调=温度/冷色调=科技）`,
+    `- 色彩必须统一且有品牌辨识度`,
+    ``,
+    `三、【情感先于信息】`,
+    `观众记住的不是参数和功能，而是这个${isProduct ? '产品' : '品牌'}让他们感受到了什么：`,
+    `- 先建立情感连接，再传递核心信息`,
+    `- 用"展示"而非"告诉"——不说"我们很创新"，展示创新的画面和成果`,
+    `- 真实的用户故事/真实的使用场景比任何口号都有说服力`,
+    ``,
+    isProduct ? [
+      `四、【产品是英雄】`,
+      `产品宣传片中，产品就是故事的主角：`,
+      `- 产品出场要有仪式感（悬念→揭幕→360度展示→功能演示）`,
+      `- 每个核心卖点用一个完整的场景来展现，而不是文字罗列`,
+      `- 使用前/使用后的对比要巧妙而不生硬`,
+      sellingPoints.length > 0 ? `- 必须覆盖以下全部卖点：${sellingPoints.join('、')}` : '',
+    ].filter(Boolean).join('\n') : [
+      `四、【品牌是信仰】`,
+      `品牌宣传片的终极目标是让观众说"我想成为这个品牌故事的一部分"：`,
+      `- 品牌历史不是年份罗列，而是"每一个关键选择背后的故事"`,
+      `- 品牌愿景不是空洞口号，而是"正在被一群人实践的理想"`,
+      `- 品牌价值不是自我标榜，而是"用户因为选择了我们而获得了什么"`,
+    ].join('\n'),
+    ``,
+    `五、【收尾是记忆锚点】`,
+    `最后一段结尾必须让人过目不忘：`,
+    slogan ? `- 品牌Logo + "${slogan}" 以最优雅的方式呈现` : '- 品牌Logo以最优雅的方式呈现',
+    callToAction ? `- 行动号召"${callToAction}"要自然融入而非生硬贴片` : '',
+    `- 结尾画面要有"余韵"——关掉视频后画面还在脑海里回响`,
+    `- 配乐在结尾处的处理：渐弱留白 > 戛然而止 > 高潮定格`,
+    ``,
+    `六、【整体节奏如交响乐】`,
+    totalEpisodes === 1 ? `单段结构：引子(10%悬念)→展开(30%铺垫)→高潮(40%核心展示)→尾声(20%情感升华+CTA)` :
+    totalEpisodes === 2 ? `两段结构：第1段——铺垫与悬念(60%情感建立+问题提出)；第2段——揭幕与升华(60%解决方案+品牌价值+CTA)` :
+    `${totalEpisodes}段结构：每段有独立主题但整体递进，从"认知→理解→认同→行动"层层推进`,
+    ``,
+    `七、【全部内容必须100%围绕「${brandName}」展开，严禁跑题】`,
   ].filter(Boolean).join('\n');
   return lines;
 }
@@ -109,9 +225,20 @@ export function buildStoryboardPrompt(params: {
   contextBlock: string;
   batchEpInfo: string;
   creativeSeed: { archetype: string; motif: string; cultural: string };
+  referenceAssets?: Array<{ url: string; type: string; name: string; tag?: string }>;
 }): string {
-  const { productionType, series, scenesPerEp, cinematographyBlock, styleGuideBlock, charAppearanceBlock, contextBlock, batchEpInfo, creativeSeed } = params;
+  const { productionType, series, scenesPerEp, cinematographyBlock, styleGuideBlock, charAppearanceBlock, contextBlock, batchEpInfo, creativeSeed, referenceAssets } = params;
   const ptInfo = PRODUCTION_TYPE_PROMPTS[productionType] || PRODUCTION_TYPE_PROMPTS.short_drama;
+  const isPromo = productionType === 'brand_promo' || productionType === 'product_promo' || productionType === 'advertisement';
+  const hasCharacters = charAppearanceBlock && charAppearanceBlock.trim() !== '' && charAppearanceBlock.trim() !== '角色待定';
+
+  // v6.0.192: 构建参考素材描述块
+  const refAssetsBlock = buildRefAssetsBlock(referenceAssets);
+
+  // v6.0.190: 宣传片纯视觉驱动模式——无角色时使用旁白+画面驱动的分镜格式
+  if (isPromo && !hasCharacters) {
+    return buildPromoStoryboardPrompt({ productionType, series, scenesPerEp, cinematographyBlock, styleGuideBlock, contextBlock, batchEpInfo, creativeSeed, ptInfo });
+  }
 
   return `你是一位将文学想象力转化为视觉语言的${ptInfo.label}级分镜大师。你深谙一个道理：好的分镜不是"画面的罗列"，而是"用画面讲故事"——每一个镜头都是一个句子，每一次转场都是一个标点符号。请为以下作品的每集创作${scenesPerEp}个电影级分镜场景描述。
 
@@ -124,6 +251,7 @@ ${styleGuideBlock}
 【角色外貌卡——场景描述中必须使用以下外貌特征】
 ${charAppearanceBlock || '角色待定'}
 ${contextBlock}
+${refAssetsBlock}
 需要创作分镜的剧集：
 ${batchEpInfo}
 
@@ -135,7 +263,7 @@ ${batchEpInfo}
 【语言要求】所有输出内容（包括description、dialogue、location、emotionalTone、transitionFromPrevious、endingVisualState等所有JSON字段值）必须使用中文书写，严禁出现英文（角色英文原名除外）。
 
 请严格按以下JSON格式回复（不要包含markdown标记），对每集返回${scenesPerEp}个场景：
-[{"episodeNumber":1,"scenes":[{"sceneNumber":1,"description":"具体场景描述(50-80字,含角色全名+外貌+连续动作3步+环境+光影)","dialogue":"角色全名：具体对话内容(每场景至少2-4句推动剧情的对话,多人对话用换行分隔,格式如:林小雨：我不会放弃的\\n张明：你确定吗)","characters":["本场景出场角色全名1","角色全名2"],"location":"具体地点(如林小雨家的客厅)","timeOfDay":"早晨/上午/中午/下午/傍晚/夜晚","cameraAngle":"近景/中景/远景/全景/特写/俯拍/仰拍","emotionalTone":"情感基调","transitionFromPrevious":"与上一个场景的镜头衔接方式(第1个场景写开场)","endingVisualState":"本场景结束时的画面状态(20-30字,角色姿态+表情+环境)"}]}]
+[{"episodeNumber":1,"scenes":[{"sceneNumber":1,"description":"具体场景描述(50-80字,含角色全名+外貌+连续动作3步+环境+光影)","dialogue":"角色全名：具体对话内容(每场景至少2-4句推动剧情的对话,多人对话用换行分隔,格式如:林小雨：我不会放弃的\\n张明：你确定吗)","characters":["本场景出场角色全名1","角色全名2"],"location":"具体地点(如林小雨家的客厅)","timeOfDay":"早晨/上午/中午/下午/傍晚/夜晚","cameraAngle":"近景/中景/远景/全景/特写/俯拍/仰拍","emotionalTone":"���感基调","transitionFromPrevious":"与上一个场景的镜头衔接方式(第1个场景写开场)","endingVisualState":"本场景结束时的画面状态(20-30字,角色姿态+表情+环境)"}]}]
 
 【分镜大师的14条军规】
 
@@ -150,7 +278,7 @@ ${batchEpInfo}
    你的对白必须至少达到中层。格式"角色全名：对话内容\\n角色全名：回应"。
    唯一例外：纯动作追逐场景可写"角色名：(内心)独白"。严禁出现未在characters中列出的角色说话。
 
-4. 【语言指纹不可混淆】每个角色的对话风格必须独一无二——学者角色可能引经据典、底层角色说话直接粗粝、压抑角色惜字如金但每句都重、话痨角色用废话掩饰不安。读对白就能猜出说话人身份。
+4. 【语言指纹不可混淆】每���角色的对话风格必须独一无二——学者角色可能引经据典、底层角色说话直接粗粝、压抑角色惜字如金但每句都重、话痨角色用废话掩饰不安。读对白就能猜出说话人身份。
 
 5. 【六幕节奏编排】${scenesPerEp}个场景依次为：开场建立(抓住眼球的第一个画面) -> 角色互动(关系张力浮现) -> 情节推进(新信息/新事件打破平衡) -> 冲突/转折(观众的预期被打破) -> 高潮时刻(情感和事件同时到达顶点) -> 结尾悬念(冻结在一个让人揪心的画面上)
 
@@ -184,6 +312,85 @@ ${batchEpInfo}
 
 
 // ============================================================
+// 2b. 宣传片纯视觉驱动分镜 Prompt 构建器 (v6.0.190)
+// ============================================================
+function buildPromoStoryboardPrompt(params: {
+  productionType: string;
+  series: { title: string; description?: string; genre?: string; theme?: string };
+  scenesPerEp: number;
+  cinematographyBlock: string;
+  styleGuideBlock: string;
+  contextBlock: string;
+  batchEpInfo: string;
+  creativeSeed: { archetype: string; motif: string; cultural: string };
+  ptInfo: { label: string };
+}): string {
+  const { series, scenesPerEp, cinematographyBlock, styleGuideBlock, contextBlock, batchEpInfo, creativeSeed, ptInfo, productionType } = params;
+  const isProduct = productionType === 'product_promo';
+
+  return `你是一位世界一流的${ptInfo.label}视觉总监兼分镜师。你深谙行业主流${isProduct ? '产品' : '品牌'}宣传片的制作精髓：以产品特写、品牌意象、航拍、延时摄影、微距、动态文字排版、旁白叙事为核心驱动力——无需依赖人物角色，纯粹用画面的力量打动观众。请为以下作品的每段创作${scenesPerEp}个电影级分镜场景描述。
+
+作品标题：${series.title}
+作品简介：${series.description || '未提供'}
+${series.genre ? `类型：${series.genre}` : ''}
+${series.theme ? `主题：${series.theme}` : ''}
+${cinematographyBlock}
+${styleGuideBlock}
+【注意】本宣传片为纯视觉驱动模式，无出镜人物角色。所有场景以产品/品牌/环境/抽象意象为主体。
+${contextBlock}
+需要创作分镜的段落：
+${batchEpInfo}
+
+【本次视觉叙事的灵魂种子】
+叙事原型：${creativeSeed.archetype.split('(')[0]}
+核心母题：${creativeSeed.motif.split('\u2014\u2014')[0]}
+
+【语言要求】所有输出内容必须使用中文书写，严禁出现英文。
+
+请严格按以下JSON格式回复（不要包含markdown标记），对每段返回${scenesPerEp}个场景：
+[{"episodeNumber":1,"scenes":[{"sceneNumber":1,"description":"画面详细描述(60-100字,含主体物/产品+运镜动作3步+环境+光影+色调。如'微距镜头缓缓推过产品表面钛合金纹理，侧光在拉丝金属上流淌如水银，焦点从边缘渐移至品牌Logo')","dialogue":"旁白文案(20-50字的旁白/文案，用于配音或字幕叠加。如'在精密与美学的交汇处，每一道弧线都经过上千次推敲')","characters":[],"location":"拍摄场景(如纯白无限远影棚/城市天际线航拍/实验室微距台)","timeOfDay":"早晨/上午/中午/下午/傍晚/夜晚/不限","cameraAngle":"近景/中景/远景/全景/特写/俯拍/仰拍/航拍/微距/slider","emotionalTone":"情感基调","transitionFromPrevious":"与上一个场景的镜头衔接方式(第1个场景写开场)","endingVisualState":"本场景结束时的画面状态(20-30字)"}]}]
+
+【${ptInfo.label}纯视觉分镜的10条军规】
+
+1. 【主体即英雄】没有人物角色时，${isProduct ? '产品' : '品牌意象'}就是画面的绝对主角。每个镜头都要赋予主体"生命感"——产品不是静物而是有呼吸的存在：光影在表面流动、材质在镜头下展现肌理、形态在运动中展示设计语言。
+
+2. 【旁白是灵魂】dialogue字段用于旁白文案/画面文字，每个场景必填。旁白风格统一——可以是诗意独白（如Apple风格）、数据驱动（如科技产品）、情感叙事（如品牌故事）、哲学思辨（如高端品牌）。旁白要与画面形成"和弦"而非"重复"——画面展示产品时旁白讲理念，画面展示场景时旁白讲情感。
+
+3. 【运镜即叙事】没有人物对话推进剧情，完全依靠运镜节奏讲故事：
+   - 慢推(slow push)=悬念与发现
+   - 环绕(orbital)=全方位展示
+   - slider水平滑动=优雅过渡
+   - 微距推近=细节揭秘
+   - 航拍俯冲=格局与震撼
+   - speed ramp变速=戏剧性转折
+
+4. 【光影造情绪】没有角色表演传递情感，光影是唯一的"演员"：
+   - 侧光=质感与立体感
+   - 逆光剪影=力量与神秘
+   - 点光源=聚焦与仪式感
+   - 自然光=真实与温度
+   - 霓虹/彩色光=未来感与科技感
+
+5. 【节奏如呼吸】${scenesPerEp}个场景的节奏编排：
+   开场(悬念/震撼画面) → 铺展(多角度展示/场景切换) → 递进(核心卖点/品牌价值) → 高潮(最震撼的视觉奇观) → 定格(Logo+Slogan收尾)
+
+6. 【场景衔接——视觉蒙太奇】无人物串联时��场景衔接更依赖视觉蒙太奇：
+   - 形状匹配剪辑(match cut)：上一镜头的圆形产品→下一镜头的太阳/月亮
+   - 运动匹配：上一镜头向右滑动→下一镜头继续向右
+   - 色彩过渡：暖色调场景→冷色调场景用溶解过渡
+   - endingVisualState必须为下一场景提供视觉桥梁
+
+7. 【画面质量——广告级5要素】description必须含：(a)光线设计(光源方向+色温+质感) (b)构图方式(对称/三分/引导线/负空间) (c)主体状态(材质/纹理/动态/特效) (d)环境氛围(背景+前景层次) (e)色彩情绪(主色调与品牌色的关系)
+
+8. 【文字排版场景】宣传片中至少1-2个场景应包含动态文字排版(motion typography)：品牌Slogan出现、核心数据展示、关键词动态呈现等。在description中明确描述文字的出现方式和排版风格。
+
+9. 【严禁重复】每个场景必须有不同的主体/角度/运镜/光影组合。禁止出现两个场景使用相同的构图+相同的运镜方式。每个场景要展示不同维度的信息。
+
+10. 【收尾定格】最后一个场景必须以品牌Logo/产品hero shot定格收尾，配合最凝练的品牌旁白。定格画面要有"余韵"——简洁、有力、过目不忘。`;
+}
+
+
+// ============================================================
 // 3. 风格指南 Prompt 构建器
 // ============================================================
 export function buildStyleGuidePrompt(params: {
@@ -208,7 +415,7 @@ ${charAppearanceList || '暂无角色信息'}
 请按以下格式输出视觉风格指南（纯文本，不要JSON格式）：
 
 【角色外貌卡】
-为每个角色写出60-100字的详细视觉描述，包含：发型发色(刘海方向/长度)、瞳色、面部五官比例(脸型/眉形/鼻形/唇形)、面部微特征(痣/疤痕/酒窝/雀斑的精确位置，如"右嘴角上方1cm有小痣"，没有则写"面部无痣无疤")、体型身高、标志性服装/配饰。
+为每个角色写出60-100字的详细视觉描述，包含：发型发色(刘海方向/长度)、瞳色、面部五官���例(脸型/眉形/鼻形/唇形)、面部微特征(痣/疤痕/酒窝/雀斑的精确位置，如"右嘴角上方1cm有小痣"，没有则写"面部无痣无疤")、体型身高、标志性服装/配饰。
 关键：每个角色的视觉设计必须"说话"——服装颜色映射性格(如总穿灰色=压抑/偏爱红色=热烈)、标志性配饰暗示过去(如永远不摘的手链=某人的遗物)、姿态暗示心理(如习惯性低头=自卑/总是叉腰=控制欲强)。
 
 【色彩方案】
@@ -222,9 +429,45 @@ ${charAppearanceList || '暂无角色信息'}
 
 要求：
 1. 所有描述必须与「${seriesStyle}」风格（${baseStylePrompt}）高度统一
-2. 角色外貌描述必须极其具体，能作为AI视频生成的精确参考，包含可量化的视觉锚点
+2. 角色外貌描述必须极其具体，能作为AI视频生成的精确参考，包含可量化的视觉��点
 3. 控制总字数在300-500字以内，言简意赅
 4. 角色形象设计符合当代中国主流审美：五官精致端正、身材比例协调、气质自然得体、衣着有品位感
 5. 【面部微特征锁定】痣/疤痕/胎记/酒窝的位置一旦设定，全系列所有场景必须完全一致——绝不允许左右脸互换或位置漂移
 6. 每个角色至少2个独特的视觉辨识标志(如独特发型/标志性配饰/特殊服装颜色)，确保视频生成时不会混淆不同角色`;
+}
+
+// ============================================================
+// 4. 构建参考素材描述块（v6.0.192）
+// 注意：URL不注入文本prompt（文本AI看不到URL），仅注入语义引导
+// 图片素材通过callAI的imageUrls参数以多模态方式注入
+// ============================================================
+function buildRefAssetsBlock(referenceAssets?: Array<{ url: string; type: string; name: string; tag?: string }>): string {
+  if (!referenceAssets || referenceAssets.length === 0) {
+    return '';
+  }
+
+  const logoAssets = referenceAssets.filter(a => a.tag === 'logo');
+  const productAssets = referenceAssets.filter(a => a.tag === 'product');
+  const sceneAssets = referenceAssets.filter(a => a.tag === 'scene');
+  const generalAssets = referenceAssets.filter(a => !a.tag || a.tag === 'general');
+  const imageAssets = referenceAssets.filter(a => a.type === 'image');
+  const videoAssets = referenceAssets.filter(a => a.type === 'video');
+
+  const lines: string[] = [`【用户提供了${referenceAssets.length}个参考素材（${imageAssets.length}张图片${videoAssets.length > 0 ? `、${videoAssets.length}个视频` : ''}）——已附在消息中，请仔细分析】`];
+
+  if (logoAssets.length > 0) {
+    lines.push(`- 其中${logoAssets.length}个为公司/品牌Logo素材：必须严格保留Logo的原始形象、颜色、比例和设计风格，在适当场景中自然融入`);
+  }
+  if (productAssets.length > 0) {
+    lines.push(`- 其中${productAssets.length}个为产品素材：仔细观察产品外观、材质、配色，在分镜中准确呈现产品特征，可进行创意化的场景扩展`);
+  }
+  if (sceneAssets.length > 0) {
+    lines.push(`- 其中${sceneAssets.length}个为场景参考素材：参考其构图、光影、色调、氛围，在分镜中融入类似的视觉风格`);
+  }
+  if (generalAssets.length > 0) {
+    lines.push(`- 其中${generalAssets.length}个为通用参考素材：提取其中的核心视觉元素、风格特征、色彩方案，灵活运用到分镜创作中`);
+  }
+  lines.push(`【素材使用原则】(a)Logo/品牌标识必须保持原始形象不可修改 (b)其他素材可提取元素进行创意扩展优化 (c)素材应分散到不同场景中自然融入，不要在单���场景堆砌所有素材 (d)重点展现品牌理念和产品价值`);
+
+  return lines.join('\n');
 }

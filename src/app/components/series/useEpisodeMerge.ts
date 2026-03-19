@@ -8,9 +8,10 @@ import { mergeEpisodeVideos, generateStoryboardVideo } from '../../services';
 import { apiRequest } from '../../utils';
 import { sbVideoUrl } from '../../utils';
 import type { Episode, Storyboard } from '../../types';
-import { PollingTimeoutError, isPollingTimeoutError } from '../../services/volcengine';
+import { isPollingTimeoutError } from '../../services/volcengine';
 
 import { getErrorMessage } from '../../utils';
+import { clientMergeEpisode } from './clientMergeLogic';
 
 /** Merge diagnostics */
 export interface MergeDiagnostics {
@@ -198,7 +199,7 @@ export function useEpisodeMerge({
 
             try {
               let newVideoUrl: string | null = null;
-              let lastFixErr: any = null;
+              let lastFixErr: unknown = null;
               for (let fixAttempt = 0; fixAttempt < 2; fixAttempt++) {
                 if (fixAttempt > 0) {
                   console.log(`[StoryboardVideoMerger] Retrying scene ${sb.sceneNumber} regeneration (attempt ${fixAttempt + 1}/2)...`);
@@ -305,6 +306,28 @@ export function useEpisodeMerge({
           }
 
           setAutoFixProgress(null);
+        } else if (d?.useClientMerge) {
+          // v6.0.205: 服务端超段数限制时，自动回退到本地合并
+          console.log(`[EpisodeMerge] Server returned useClientMerge, falling back to client-side merge (${videoCounts.withVideo} segments)...`);
+          toast.info('分镜较多，正在使用本地合并...', { duration: 3000 });
+          try {
+            const { blobUrl, sizeMB, warnings } = await clientMergeEpisode(
+              episode,
+              storyboards,
+              undefined,
+              { seriesId }
+            );
+            if (warnings?.length) {
+              toast.warning(`本地合并完成但有警告：\n${warnings.join('\n')}`, { duration: 8000 });
+            } else {
+              toast.success(`${videoCounts.withVideo} 个分镜本地合并成功！(${sizeMB}MB)`);
+            }
+            setMergedVideoUrl(blobUrl);
+            onMergeComplete?.(blobUrl);
+          } catch (clientErr: unknown) {
+            console.error('[EpisodeMerge] Client merge also failed:', clientErr);
+            toast.error('本地合并也失败了：' + getErrorMessage(clientErr));
+          }
         } else {
           toast.error('视频合并失败：' + (result.error || '未知错误'));
         }

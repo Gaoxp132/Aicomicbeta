@@ -37,7 +37,7 @@ export function Header({ activeTab, onTabChange, userPhone, onLoginClick, onSett
             </div>
             <div>
               <h1 className="text-base sm:text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                AI漫剧
+                AI影视
               </h1>
               <p className="text-[10px] text-gray-500 hidden sm:block">
                 v{APP_VERSION}

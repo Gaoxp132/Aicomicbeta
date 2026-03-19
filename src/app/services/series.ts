@@ -3,9 +3,9 @@
  * Split from consolidated services/index.ts (v6.0.68)
  */
 
-import { apiRequest } from '../utils';
-import type { ApiResponse, Series, SeriesFormData, Episode, Storyboard } from '../types';
-import { isEdgeFunctionReachable, getErrorMessage } from '../utils';
+import { apiRequest, apiGet, apiPost, apiPut, isEdgeFunctionReachable, getErrorMessage, isPromoType } from '../utils';
+import type { ApiResult } from '../utils';
+import type { Series, SeriesFormData, Episode, Storyboard } from '../types';
 
 // ═══════════════════════════════════════════════════════════════════
 // [1] seriesService — CRUD + polling
@@ -14,9 +14,9 @@ import { isEdgeFunctionReachable, getErrorMessage } from '../utils';
 export async function createSeries(
   formData: SeriesFormData,
   userPhone: string
-): Promise<ApiResponse<Series>> {
+): Promise<ApiResult> {
   try {
-    const result = await apiRequest<Series>('/series', {
+    const result = await apiRequest('/series', {
       method: 'POST',
       body: JSON.stringify({
         title: formData.title,
@@ -31,19 +31,27 @@ export async function createSeries(
         referenceImageUrl: formData.referenceImageUrl,
         productionType: formData.productionType,
         isPublic: formData.isPublic !== undefined ? formData.isPublic : true,
-        resolution: formData.resolution || '720p', // v6.0.78: 传递分辨率
-        aspectRatio: formData.aspectRatio || '9:16', // v6.0.79: 传递画面比例
+        resolution: formData.resolution || '720p',
+        aspectRatio: formData.aspectRatio || '9:16',
+        // v6.0.90: 品牌/产品宣传片专属字段
+        brandName: formData.brandName || (isPromoType(formData.productionType) ? formData.title : undefined),
+        slogan: formData.slogan,
+        sellingPoints: formData.sellingPoints,
+        promoTone: formData.promoTone,
+        callToAction: formData.callToAction,
+        // v6.0.192: 多素材上传
+        referenceAssets: formData.referenceAssets,
       }),
       timeout: 90000,
       maxRetries: 3,
     });
 
     if (!result.success || !result.data) {
-      return { success: false, error: result.error || '创建漫剧失败' };
+      return { success: false, error: result.error || '创建作品失败' };
     }
 
     const newSeries = result.data;
-    triggerAutoGeneration(newSeries.id, formData, userPhone).catch((error: unknown) => {
+    triggerAutoGeneration(String(newSeries.id), formData, userPhone).catch((error: unknown) => {
       console.error('[SeriesService] Auto-generation error:', error);
     });
 
@@ -68,6 +76,9 @@ async function triggerAutoGeneration(
         totalEpisodes: formData.episodeCount,
         style: formData.style,
         enableAudio: false,
+        // v6.0.194: 传递参考素材URL，让AI生成时能"看到"用户上传的图片/视频
+        referenceImageUrl: formData.referenceImageUrl,
+        referenceAssets: formData.referenceAssets,
       }),
       timeout: 15000,  // v6.0.143: 300s→15s — fire-and-forget, 仅确认服务器收到请求
       maxRetries: 0,
@@ -88,7 +99,7 @@ export async function retrySeries(
   seriesId: string,
   userPhone: string,
   storyOutline: string
-): Promise<{ success: boolean; data?: any; error?: string }> {
+): Promise<ApiResult> {
   // v6.0.148: /generate is best-effort status pre-set — don't bail out on failure
   // generate-full-ai independently sets status='generating' via updateProgress
   apiRequest(`/series/${seriesId}/generate`, {
@@ -120,7 +131,7 @@ export async function retrySeries(
 
 export async function getUserSeries(
   userPhone: string
-): Promise<{ success: boolean; data?: Series[]; error?: string; count?: number }> {
+): Promise<ApiResult> {
   try {
     const url = `/series?userPhone=${encodeURIComponent(userPhone)}`;
     return await apiRequest(url, { method: 'GET', silent: true, maxRetries: 2 });
@@ -132,7 +143,7 @@ export async function getUserSeries(
 
 export async function getSeries(
   seriesId: string
-): Promise<{ success: boolean; data?: Series; error?: string }> {
+): Promise<ApiResult> {
   const result = await apiRequest(`/series/${seriesId}`, { method: 'GET', silent: true, maxRetries: 2 });
   if (!result.success && result.error !== 'offline') {
     console.error('[SeriesService] Failed to get series:', result.error);
@@ -143,7 +154,7 @@ export async function getSeries(
 export async function generateStoryboards(
   seriesId: string,
   episodeId: string
-): Promise<{ success: boolean; data?: any[]; error?: string }> {
+): Promise<ApiResult> {
   return apiRequest(`/episodes/${episodeId}/generate-storyboards-ai`, {
     method: 'POST',
     body: JSON.stringify({ sceneCount: 10 }),
@@ -156,7 +167,7 @@ export async function generateFullAI(
   seriesId: string,
   userPhone: string,
   onProgress?: (status: string) => void
-): Promise<{ success: boolean; data?: any; error?: string }> {
+): Promise<ApiResult> {
   try {
     if (onProgress) onProgress('正在启动完整生成流程...');
     // v6.0.148: /generate is best-effort status pre-set — don't await/block on failure
@@ -194,7 +205,7 @@ export async function generateFullAI(
 export async function updateSeries(
   seriesId: string,
   updates: Partial<Series> & Record<string, unknown>
-): Promise<{ success: boolean; data?: Series; error?: string }> {
+): Promise<ApiResult> {
   return apiRequest(`/series/${seriesId}`, {
     method: 'PUT',
     body: JSON.stringify(updates),
@@ -204,7 +215,7 @@ export async function updateSeries(
 export async function deleteSeries(
   seriesId: string,
   userPhone: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<ApiResult> {
   return apiRequest(`/series/${seriesId}`, {
     method: 'DELETE',
     body: JSON.stringify({ userPhone }),
@@ -213,7 +224,7 @@ export async function deleteSeries(
 
 export async function syncThumbnails(
   seriesId: string
-): Promise<{ success: boolean; synced?: number; storyboardsSynced?: number; error?: string }> {
+): Promise<ApiResult> {
   return apiRequest(`/series/${seriesId}/sync-thumbnails`, { method: 'POST' });
 }
 
@@ -222,7 +233,7 @@ export async function syncThumbnails(
 async function getSeriesDetails(
   seriesId: string,
   userPhone?: string,
-): Promise<{ success: boolean; data?: any; error?: string }> {
+): Promise<ApiResult> {
   if (!isEdgeFunctionReachable()) return { success: false, error: 'offline' };
   try {
     const params = new URLSearchParams();
@@ -248,7 +259,7 @@ async function getSeriesDetails(
 export function pollSeriesProgress(
   seriesId: string,
   userPhone: string,
-  onProgress: (series: any) => void,
+  onProgress: (series: Record<string, unknown>) => void,
   interval: number = 3000
 ): () => void {
   let isPolling = true;
@@ -291,7 +302,7 @@ interface GenerateEpisodesRequest { seriesTitle: string; seriesDescription: stri
 
 export async function generateEpisodeOutlines(
   request: GenerateEpisodesRequest
-): Promise<{ success: boolean; episodes?: EpisodeOutline[]; error?: string }> {
+): Promise<ApiResult> {
   try {
     const result = await apiRequest('/ai/generate-episodes', { method: 'POST', body: JSON.stringify(request), timeout: 60000, maxRetries: 2 });
     if (!result.success) return { success: false, error: result.error || '生成失败' };
@@ -303,7 +314,7 @@ export async function generateEpisodeOutlines(
 
 // ═══════════════════════════════════════════════════════════════════
 // [3] videoPromptBuilder
-// ═══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 
 const PRO_SHOT_MAP: Record<string, string> = {
   'extreme-long-shot': '大远景(ELS)，超广角镜头缓缓平移，展现宏大全貌',
@@ -311,7 +322,7 @@ const PRO_SHOT_MAP: Record<string, string> = {
   'medium-shot': '中景(MS)，平稳跟拍人物膝上半身，展现肢体语言',
   'medium-close-up': '中近景(MCU)，缓慢推镜至胸部以上，捕捉表情细节',
   'close-up': '近景特写(CU)，缓慢推镜聚焦面部，传达深层情感',
-  'extreme-close-up': '极特写(ECU)，微距镜头聚焦极小细节，强化戏剧张力',
+  'extreme-close-up': '极特写(ECU)，微距镜头聚焦极小节，强化戏剧张力',
   '大远景': '大远景(ELS)，超广角镜头缓缓平移，展现宏大全貌',
   '远景': '远景(LS)，固定或缓慢拉远，展示人物全身与环境关系',
   '全景': '全景(FS)，固定镜头展示完整场景与所有人物关系',
@@ -332,88 +343,45 @@ const PRO_SHOT_MAP: Record<string, string> = {
 };
 
 export function buildVideoPrompt(series: Series, episode: Episode, storyboard: Storyboard): string {
+  // v6.0.196: Seedance-optimized prompt — scene description FIRST, constraints BRIEF
+  // Seedance is a video model, not an LLM. It has ~200-char effective attention.
+  // Rule: scene description = 60%+ of prompt, everything else is brief keywords.
   const parts: string[] = [];
 
-  const coherence = series.coherenceCheck;
-  if (coherence) {
-    if (coherence.visualStyleGuide) parts.push(`[视觉风格指南] ${coherence.visualStyleGuide}`);
-    else if (coherence.baseStylePrompt) parts.push(`[画面风格] ${coherence.baseStylePrompt}`);
+  // 1. SCENE DESCRIPTION — the most important part, must be first
+  if (storyboard.description) parts.push(storyboard.description);
+  if (storyboard.dialogue) parts.push(`对白:「${storyboard.dialogue}」`);
 
-    // v6.0.78: 修复角色缺失——从描述和对话中智能匹配角色外貌，而非仅依赖storyboard.characters字段
-    if (coherence.characterAppearances?.length) {
-      const descDialogue = `${storyboard.description || ''} ${storyboard.dialogue || ''}`;
-      // 优先匹配：description/dialogue中出现了角色名
-      const matchedByText = coherence.characterAppearances
-        .filter(ca => ca.name && descDialogue.includes(ca.name));
-      // 备选：storyboard.characters字段中显式指定的角色
-      const matchedByField = storyboard.characters?.length
-        ? coherence.characterAppearances.filter(ca =>
-            storyboard.characters.some(charId => charId === ca.name || charId.includes(ca.name))
-          )
-        : [];
-      // 合并去重
-      const seen = new Set<string>();
-      const allMatched = [...matchedByText, ...matchedByField].filter(ca => {
-        if (seen.has(ca.name)) return false;
-        seen.add(ca.name);
-        return true;
-      });
-      if (allMatched.length > 0) {
-        const involved = allMatched.map(ca => `${ca.name}(${ca.role}): ${ca.appearance}`).join('; ');
-        parts.push(`[角色外貌——必须严格按此描述生成角色画面] ${involved}`);
-      } else {
-        // 未从文本匹配到任何角色时，注入全部角色外貌（保证不遗漏）
-        const all = coherence.characterAppearances.map(ca => `${ca.name}(${ca.role}): ${ca.appearance}`).join('; ');
-        parts.push(`[角色外貌] ${all}`);
-      }
+  // 2. BRIEF character note — only names + key visual trait, max 1 line
+  const coherence = series.coherenceCheck;
+  if (coherence?.characterAppearances?.length) {
+    const descText = `${storyboard.description || ''} ${storyboard.dialogue || ''}`;
+    const matched = coherence.characterAppearances
+      .filter(ca => ca.name && descText.includes(ca.name));
+    if (matched.length > 0) {
+      // Only name + core appearance, max 40 chars per character
+      const brief = matched.map(ca => {
+        const app = ca.appearance || '';
+        return `${ca.name}:${app.substring(0, 40)}`;
+      }).join('；');
+      parts.push(`角色:${brief}`);
     }
   }
 
-  if (storyboard.description) parts.push(storyboard.description);
-  if (storyboard.dialogue) {
-    // v6.0.78: 对话中标注说话者，确保不张冠李戴
-    parts.push(`对白: "${storyboard.dialogue}"`);
-  }
-
-  if (series.characters?.length && !coherence?.characterAppearances?.length) {
-    // fallback: 从series.characters匹配（仅在无coherence数据时使用）
-    const descDialogue = `${storyboard.description || ''} ${storyboard.dialogue || ''}`;
-    const charDescriptions = series.characters
-      .filter(c => {
-        // 先检查storyboard.characters字段
-        if (storyboard.characters?.length) {
-          if (storyboard.characters.includes(c.id) || storyboard.characters.includes(c.name)) return true;
-        }
-        // 再检查描述/对话文本中的角色名
-        if (c.name && descDialogue.includes(c.name)) return true;
-        return false;
-      })
-      .map(c => { const desc = c.appearance || c.description || ''; return `${c.name}: ${desc}`; })
-      .filter(Boolean);
-    if (charDescriptions.length) parts.push(`[角色] ${charDescriptions.join('; ')}`);
-  }
-
-  const envParts: string[] = [];
-  if (storyboard.location) envParts.push(storyboard.location);
+  // 3. BRIEF environment + camera — just keywords
+  const envTokens: string[] = [];
+  if (storyboard.location) envTokens.push(storyboard.location);
   if (storyboard.timeOfDay) {
     const timeMap: Record<string, string> = { morning: '清晨', noon: '正午', afternoon: '午后', evening: '傍晚', night: '夜晚' };
-    envParts.push(timeMap[storyboard.timeOfDay] || storyboard.timeOfDay);
+    envTokens.push(timeMap[storyboard.timeOfDay] || storyboard.timeOfDay);
   }
-  if (envParts.length) parts.push(`[场景] ${envParts.join(', ')}`);
+  if (storyboard.emotionalTone) envTokens.push(storyboard.emotionalTone);
+  if (envTokens.length) parts.push(envTokens.join('，'));
 
   if (storyboard.cameraAngle) {
     const proShot = PRO_SHOT_MAP[storyboard.cameraAngle] || storyboard.cameraAngle;
-    parts.push(`[镜头] ${proShot}，稳定运镜无抖动`);
+    parts.push(`镜头:${proShot}`);
   }
 
-  if (storyboard.emotionalTone) parts.push(`[情感] ${storyboard.emotionalTone}`);
-
-  if (episode.synopsis) {
-    const short = episode.synopsis.length > 80 ? episode.synopsis.substring(0, 80) + '...' : episode.synopsis;
-    parts.push(`[剧情背景] ${short}`);
-  }
-
-  if (storyboard.growthInsight) parts.push(`[成长洞察] ${storyboard.growthInsight}`);
-
-  return parts.filter(Boolean).join('\n');
+  return parts.filter(Boolean).join('。');
 }

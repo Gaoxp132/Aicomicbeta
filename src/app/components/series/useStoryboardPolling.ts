@@ -69,7 +69,7 @@ export function useStoryboardPolling({
         if (cancelled) return;
         if (!result.success || !result.data) { scheduleNext(); return; }
         const freshSeries = result.data;
-        const freshEpisode = freshSeries.episodes?.find((ep: any) => ep.id === episodeId);
+        const freshEpisode = freshSeries.episodes?.find((ep: { id: string }) => ep.id === episodeId);
         if (!freshEpisode?.storyboards) { scheduleNext(); return; }
 
         const minutesSinceMount = (Date.now() - mountTimeRef.current) / 60000;
@@ -78,7 +78,7 @@ export function useStoryboardPolling({
         updateStoryboards(prev => {
           const updated = prev.map(sb => {
             if (sb.status !== 'generating') return sb;
-            const fresh = freshEpisode.storyboards.find((f: any) => f.id === sb.id);
+            const fresh = freshEpisode.storyboards.find((f: { id: string; videoUrl?: string; video_url?: string; status?: string }) => f.id === sb.id);
             const freshVideoUrl = fresh?.videoUrl || fresh?.video_url;
             const freshStatus = fresh?.status;
             if (freshVideoUrl && (freshVideoUrl.startsWith('http://') || freshVideoUrl.startsWith('https://'))) {

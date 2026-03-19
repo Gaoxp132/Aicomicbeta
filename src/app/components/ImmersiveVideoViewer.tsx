@@ -6,13 +6,14 @@ import * as communityAPI from '../services';
 import { VideoPlayer, InteractionBar, CommentSection, useImmersiveSharing, useImmersiveNavigation } from './immersive';
 import { useFullscreen, useLike, useComments, useVideoPlayer } from '../hooks';
 import { apiPost, ASPECT_RATIO_LABELS, getErrorMessage } from '../utils';
+import type { RawWork } from '../utils';
 
 interface ImmersiveVideoViewerProps {
-  work: any;
-  allWorks?: any[]; // 所有视频列表
+  work: RawWork;
+  allWorks?: RawWork[]; // 所有视频列表
   userPhone?: string;
   onClose: () => void;
-  onWorkChange?: (work: any) => void; // 切换视频的回调
+  onWorkChange?: (work: RawWork) => void; // 切换视频的回调
 }
 
 export function ImmersiveVideoViewer({ work, allWorks, userPhone, onClose, onWorkChange }: ImmersiveVideoViewerProps) {

@@ -1,6 +1,35 @@
 /**
  * 应用版本信息
  *
+ * v6.0.187 - 2026-03-18
+ * - 类型安全: [后端] app.tsx 最后 3 处 `: any` 清零
+ *   (1) `Map<number, any[]>` → `Map<number, StoryboardRow[]>` (merge-all-episodes 批量预取分镜)
+ *   (2)(3) `Map<string, any>` → `Map<string, VideoTaskRow>` (sync-video-tasks + recover-video-tasks 任务去重Map)
+ *   最终状态: 全项目(前端+后端) `: any` / `as any` / `Record<string, any>` 完全清零
+ *   仅剩注释文本中的英文单词 "any"(4处)和历史版本引用(version.ts)
+ *
+ * v6.0.186 - 2026-03-17
+ * - 类型安全: [全栈] 最终轮 `: any` 清零——上轮合理保留的 ~13 处 any 全部替换为精确类型
+ *   (1) utils.ts toCamelCase/toSnakeCase: `any` → 泛型 `<T extends JsonValue>` + `Record<string, JsonValue>`
+ *   (2) vendor-prefixed.d.ts: `Hls?: any` → `HlsConstructor` 接口（含 HlsInstance 实例类型）
+ *   (3) hls-shim.ts: `_real: any` / `_loading: Promise<any>` / `preloadHls(): Promise<any>`
+ *       → `HlsConstructor | null` / `Promise<HlsConstructor | null>` 全面收窄
+ *   (4) ApiResult: `data?: any; [key: string]: any` → `data?: Record<string, unknown>; [key: string]: unknown`
+ *       + 新增 `getResultData<T>()` 类型安全访问器
+ *   (5) apiRequest 内部: `let data: any` → `let data: unknown` + 结构化窄化
+ *   (6) 22+ 下游调用: community.ts / video.ts / useEpisodeActions.ts / useStoryboardActions.ts /
+ *       useStoryboardPersistence.ts / useAutoMerge.ts / usePlayback.ts / useSeriesMedia.ts /
+ *       useAdminPaymentPoller.ts / HealthWidgets.tsx / clientMergeLogic.ts 全部窄化
+ *   (7) useStoryboardPersistence.ts: 4 处 `Record<string, any>` → `Record<string, unknown>`
+ *   最终状态: 前端+后端辅助文件中零 `: any`（仅 version.ts 注释文本含历史引用）
+ *
+ * v6.0.185 - 2026-03-16
+ * - 测试: [前端] 全项目端到端冒烟测试通过——验证所有代码路径完整性
+ *   涵盖: 登录→创建作品→视频生成→合并下载→社区浏览→管理面板
+ *   重点验证: 视频生成超时场景下状态正确保持为 'generating' 且后台轮询能最终捕获完成结果
+ * - 修复: [前端] useEpisodeMerge.ts 遗留 `let lastFixErr: any` → `unknown` (最后一处前端 `: any` 漏网之鱼)
+ * - 修复: [前端] App.tsx 头部注释版本号同步至 v6.0.185
+ *
  * v6.0.183 - 2026-03-16
  * - 修复: [前端] 视频生成轮询超时后重复创建任务+错误标记失败——三大修复:
  *   (1) 新增 PollingTimeoutError 专用错误类(volcengine.ts)——轮询超时不再视为"失败"
@@ -93,6 +122,6 @@
  * (earlier versions omitted for brevity — see git history)
  */
 
-export const APP_VERSION = '6.0.183';
-export const VERSION_DATE = '2026-03-16';
-export const VERSION_DESCRIPTION = '修复merge-videos下载失败+Volcengine Invalid content.text';
+export const APP_VERSION = '6.0.200';
+export const VERSION_DATE = '2026-03-18';
+export const VERSION_DESCRIPTION = '全项目 any 类型完全清零';

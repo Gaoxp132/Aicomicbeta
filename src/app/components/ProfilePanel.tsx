@@ -10,6 +10,7 @@ import * as communityAPI from '../services';
 import * as seriesAPI from '../services';
 import { getSeriesDetail } from '../services';
 import { normalizeWorks, convertWorkToComic } from '../utils';
+import type { RawWork } from '../utils';
 import { useVideoQuota } from '../hooks/useVideoQuota';
 import { getErrorMessage } from '../utils';
 import type { Comic, CommunitySeriesWork } from '../types/index';
@@ -30,7 +31,7 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
   const [userNickname, setUserNickname] = useState<string>('');
   
   // 作品列表状态
-  const [works, setWorks] = useState<any[]>([]);
+  const [works, setWorks] = useState<RawWork[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasInitialLoad, setHasInitialLoad] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
@@ -97,26 +98,26 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
     setIsLoading(true);
     
     try {
-      // 🔥 同时加载漫剧和社区作品
+      // 🔥 同时加载影视作品和社区作品
       const [seriesResult, communityResult] = await Promise.all([
         seriesAPI.getUserSeries(userPhone),
         communityAPI.getUserWorks(userPhone, page, ITEMS_PER_PAGE)
       ]);
       
-      const allWorks: any[] = [];
+      const allWorks: RawWork[] = [];
       
-      // 1️⃣ 添加漫剧数据
+      // 1️⃣ 添加影视作品数据
       if (seriesResult.success && seriesResult.data && Array.isArray(seriesResult.data)) {
         const seriesWorks = seriesResult.data.map((series: Series) => ({
           id: series.id,
           task_id: series.id,
-          type: 'series', // 标记为漫剧类型
+          type: 'series', // 标记为影视系列类型
           title: series.title,
           description: series.description,
           // ✅ 修复：同时设置 thumbnail 和 coverImage 字段
           thumbnail: series.coverImage || series.cover_image_url || series.cover_image || '',
           coverImage: series.coverImage || series.cover_image_url || series.cover_image || '',
-          videoUrl: '', // 漫剧暂不支持直接播放
+          videoUrl: '', // 影视系列暂不支持直接播放
           // ✅ 修复：显示正确的状态
           status: series.status === 'completed' ? 'completed' : (series.status === 'generating' ? 'processing' : series.status),
           createdAt: series.createdAt || series.created_at,
@@ -129,17 +130,17 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
           // ✅ 修复：传递 totalEpisodes 和 completedEpisodes
           totalEpisodes: series.totalEpisodes || series.total_episodes || 0,
           completedEpisodes: series.completedEpisodes || series.completed_episodes || 0,
-          seriesData: series, // 保存完整的漫剧数据
+          seriesData: series, // 保存完整的影视作品数据
         }));
         
         allWorks.push(...seriesWorks);
       }
       
-      // 2️⃣ 添加社区作品数据（过滤掉漫剧的分镜任务，只保留独立视频）
+      // 2️⃣ 添加社区作品数据（过滤掉影视系列的分镜任务，只保留独立视频）
       if (communityResult.success && communityResult.works && Array.isArray(communityResult.works)) {
         const normalizedWorks = normalizeWorks(communityResult.works);
-        // v6.0.19: 过滤掉属于漫剧系列的分镜任务
-        const independentWorks = normalizedWorks.filter((work: any) => {
+        // v6.0.19: 过滤掉属于影视系列的分镜任务
+        const independentWorks = normalizedWorks.filter((work: RawWork) => {
           if (work.type === 'series') return false;
           if (work.metadata) {
             try {
@@ -154,8 +155,8 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
       }
       
       // 去重（基于ID）
-      const uniqueWorksMap = new Map();
-      allWorks.forEach((work: any) => {
+      const uniqueWorksMap = new Map<string, RawWork>();
+      allWorks.forEach((work: RawWork) => {
         const workId = work.task_id || work.id;
         const existingWork = uniqueWorksMap.get(workId);
         
@@ -207,8 +208,8 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
       
       if (result.success && result.works && Array.isArray(result.works)) {
         const normalizedWorks = normalizeWorks(result.works);
-        // v6.0.19: 过滤掉属于漫剧系列的分镜任务
-        const independentWorks = normalizedWorks.filter((work: any) => {
+        // v6.0.19: 过滤掉属于影视系列的分镜任务
+        const independentWorks = normalizedWorks.filter((work: RawWork) => {
           if (work.type === 'series') return false;
           if (work.metadata) {
             try {
@@ -221,8 +222,8 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
         const allWorks = [...works, ...independentWorks];
         
         // 去重
-        const uniqueWorksMap = new Map();
-        allWorks.forEach((work: any) => {
+        const uniqueWorksMap = new Map<string, RawWork>();
+        allWorks.forEach((work: RawWork) => {
           const workId = work.task_id || work.id;
           if (!uniqueWorksMap.has(workId)) {
             uniqueWorksMap.set(workId, work);
@@ -284,7 +285,7 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
 
   // const filterExpiredVideos function definition removed - was a noop (always returned true)
 
-  const updateStats = (worksList: any[]) => {
+  const updateStats = (worksList: RawWork[]) => {
     const totalLikes = worksList.reduce((sum, work) => sum + (work.likes || 0), 0);
     const totalViews = worksList.reduce((sum, work) => sum + (work.views || 0), 0);
     
@@ -295,8 +296,8 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
     });
   };
 
-  const handleSelectWork = (work: any, worksList?: any[]) => {
-    // 🔥 关键修复：漫剧类型使用 SeriesViewer，而非 ImmersiveVideoViewer
+  const handleSelectWork = (work: RawWork, worksList?: RawWork[]) => {
+    // 🔥 关键修复：影视系列类型使用 SeriesViewer，而非 ImmersiveVideoViewer
     if (work.type === 'series') {
       openSeriesViewer(work);
       return;
@@ -305,17 +306,17 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
     // 普通视频作品 → ImmersiveVideoViewer
     const comic = convertWorkToComic(work);
     const comicsList = (worksList || works)
-      .filter((w: any) => w.type !== 'series') // 排除漫剧
+      .filter((w: RawWork) => w.type !== 'series') // 排除影视系列
       .map(convertWorkToComic);
     onSelectComic(comic, comicsList);
   };
 
-  // 🆕 打开漫剧系列查看器
-  const openSeriesViewer = async (work: any) => {
+  // 🆕 打开影视系列查看器
+  const openSeriesViewer = async (work: RawWork) => {
     try {
       const seriesId = work.id || work.seriesData?.id;
       if (!seriesId) {
-        toast.error('无法打开漫剧：缺少ID');
+        toast.error('无法打开作品：缺少ID');
         return;
       }
       
@@ -324,7 +325,7 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
         setSelectedSeriesForViewer(result.data);
       } else {
         // 如果社区API失败，用本地数据构造基本视图
-        toast.error('加载漫剧详情失败，请稍后重试');
+        toast.error('加载作品详情失败，请稍后重试');
       }
     } catch (error: unknown) {
       console.error('[ProfilePanel] Failed to open series viewer:', error);
@@ -376,7 +377,7 @@ export function ProfilePanel({ userPhone, onSelectComic, onLogout, onOpenPayment
         onRefresh={handleRefresh}
       />
 
-      {/* 🆕 漫剧系列查看器 */}
+      {/* 🆕 影视系列查看器 */}
       <AnimatePresence>
         {selectedSeriesForViewer && (
           <SeriesViewer

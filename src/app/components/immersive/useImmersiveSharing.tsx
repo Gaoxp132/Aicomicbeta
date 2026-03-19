@@ -5,8 +5,9 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
+import type { RawWork } from '../../utils';
 
-interface UseImmersiveSharingOptions { work: any; }
+interface UseImmersiveSharingOptions { work: RawWork; }
 
 export function useImmersiveSharing({ work }: UseImmersiveSharingOptions) {
   const [showShareMenu, setShowShareMenu] = useState(false);

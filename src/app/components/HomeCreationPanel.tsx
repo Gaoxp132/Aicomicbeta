@@ -1,5 +1,5 @@
 /**
- * 首页创作面板 — "一句话生成漫剧"
+ * 首页创作面板 — "一句话生成影视作品"
  * v6.0.2: 沉浸式创作进度 + 模板智能匹配 + 移动端优化
  * v6.0.0: 产品体验全面升级，AI-first 创作流程
  *
@@ -15,7 +15,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Sparkles, Wand2, Film, ChevronRight, Loader2,
   Play, Clock, Zap, ArrowRight, BookOpen, Palette,
-  CornerDownLeft, Users, Grid3x3, CheckCircle2, X
+  CornerDownLeft
 } from 'lucide-react';
 import { Button } from './ui';
 import { toast } from 'sonner';
@@ -23,7 +23,7 @@ import * as seriesService from '../services';
 import type { Series, SeriesFormData, ProductionType } from '../types';
 import { RecentSeriesCard, FeatureCard, ReferenceImageInput, QUICK_TEMPLATES, STYLE_CHIPS, EPISODE_PRESETS, MAX_INPUT_LENGTH, PRODUCTION_TYPES } from './home';
 import { CreationProgressOverlay } from './home/CreationProgressOverlay';
-import { getErrorMessage } from '../utils';
+import { getErrorMessage, getAutoDefaults } from '../utils';
 
 interface HomeCreationPanelProps {
   userPhone?: string;
@@ -49,11 +49,17 @@ export function HomeCreationPanel({
   const [creationPhase, setCreationPhase] = useState('');
   const [showProgressOverlay, setShowProgressOverlay] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const styleScrollRef = useRef<HTMLDivElement>(null);
   // v6.0.16: 参考图上传
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [referenceImagePreview, setReferenceImagePreview] = useState<string | null>(null);
   const [isUploadingRef, setIsUploadingRef] = useState(false);
+
+  // 切换作品类型时自动同步默认集数
+  const handleProductionTypeChange = useCallback((pt: ProductionType) => {
+    setSelectedProductionType(pt);
+    const defaults = getAutoDefaults(pt);
+    setSelectedEpisodes(defaults.episodeCount);
+  }, []);
 
   // 自动调整 textarea 高度
   useEffect(() => {
@@ -91,7 +97,7 @@ export function HomeCreationPanel({
 
     const finalInput = userInput.trim();
     if (!finalInput) {
-      toast.error('请输入你想要的漫剧内容');
+      toast.error('请输入你想要的影视内容');
       textareaRef.current?.focus();
       return;
     }
@@ -102,6 +108,7 @@ export function HomeCreationPanel({
 
     try {
       // 构建表单数据 — 让AI自动生成标题和描述
+      const defaults = getAutoDefaults(selectedProductionType);
       const formData: SeriesFormData = {
         title: '', // AI自动生成
         description: '', // AI自动生成
@@ -111,6 +118,8 @@ export function HomeCreationPanel({
         storyOutline: finalInput,
         referenceImageUrl: referenceImage || undefined,
         productionType: selectedProductionType,
+        aspectRatio: defaults.aspectRatio,
+        resolution: defaults.resolution,
       };
 
       setCreationPhase('AI正在创作剧本...');
@@ -170,7 +179,7 @@ export function HomeCreationPanel({
         <h1 className="text-3xl sm:text-5xl font-bold text-white mb-3 leading-tight">
           用一句话
           <span className="bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400 bg-clip-text text-transparent">
-            {' '}创作漫剧
+            {' '}创作影视
           </span>
         </h1>
         <p className="text-gray-400 text-sm sm:text-base max-w-lg mx-auto">
@@ -196,14 +205,7 @@ export function HomeCreationPanel({
                   setUserInput(e.target.value);
                 }
               }}
-              placeholder={
-                selectedProductionType === 'movie' ? '描述你想要的电影故事... 例如：一部关于末日生存者穿越废墟寻找希望之光的科幻史诗'
-                : selectedProductionType === 'tv_series' ? '描述你想要的电视剧... 例如：都市职场中三位性格迥异的女性互相扶持成长的温暖故事'
-                : selectedProductionType === 'micro_film' ? '描述你想要的微电影... 例如：一封寄不出去的信，连接了两个时空中的祖孙'
-                : selectedProductionType === 'documentary' ? '描述你想要的纪录片... 例如：记录一位非遗传承人用一生守护即将消失的手艺'
-                : selectedProductionType === 'comic_drama' ? '描述你想要的漫剧... 例如：热血少年在异世界觉醒超能力，守护伙伴的冒险之旅'
-                : '描述你想要的故事... 例如：一个北漂程序员和咖啡店老板娘的治愈爱情故事'
-              }
+              placeholder="描述你想创作的内容... 故事、品牌介绍、产品亮点、广告创意，任何想法都可以"
               rows={2}
               disabled={isCreating}
               className="w-full bg-transparent text-white placeholder:text-gray-500 text-base sm:text-lg resize-none focus:outline-none leading-relaxed pr-2"
@@ -241,60 +243,23 @@ export function HomeCreationPanel({
             </div>
           </div>
 
-          {/* v6.0.36: 作品类型选择 */}
-          <div
-            className="flex flex-wrap gap-1.5 mb-3"
-          >
-            {PRODUCTION_TYPES.map((pt) => (
-              <button
-                key={pt.id}
-                onClick={() => setSelectedProductionType(pt.id)}
-                disabled={isCreating}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap flex-shrink-0 ${
-                  selectedProductionType === pt.id
-                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40 shadow-sm shadow-blue-500/20'
-                    : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent'
-                }`}
-              >
-                <span className="mr-1">{pt.icon}</span>
-                {pt.label}
-              </button>
-            ))}
-          </div>
-
-          {/* 风格选择 — v6.0.37: 移动端/PC端统一wrap网格展示所有风格 */}
-          <div
-            ref={styleScrollRef}
-            className="flex flex-wrap gap-1.5 mb-3"
-          >
-            {STYLE_CHIPS.map((style) => (
-              <button
-                key={style.id}
-                onClick={() => setSelectedStyle(style.id)}
-                disabled={isCreating}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap flex-shrink-0 ${
-                  selectedStyle === style.id
-                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm shadow-purple-500/20'
-                    : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent'
-                }`}
-              >
-                <span className="mr-1">{style.icon}</span>
-                {style.label}
-              </button>
-            ))}
-          </div>
-
-          {/* 操作行：集数 + 创作按钮 */}
+          {/* v6.0.36: 作品类型 + 风格 — 收入可折叠的"更多选项"中 */}
           <div className="flex items-center justify-between gap-3">
-            {/* 集数选择 */}
-            <button
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="px-2.5 py-1 rounded-lg text-xs text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors border border-transparent flex items-center gap-1 flex-shrink-0"
-            >
-              <Film className="w-3 h-3" />
-              {selectedEpisodes}集
-              <ChevronRight className={`w-3 h-3 transition-transform ${showAdvanced ? 'rotate-90' : ''}`} />
-            </button>
+            {/* 更多选项折叠按钮 */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="px-2.5 py-1 rounded-lg text-xs text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors border border-transparent flex items-center gap-1 flex-shrink-0"
+              >
+                <Palette className="w-3 h-3" />
+                <span>{PRODUCTION_TYPES.find(p => p.id === selectedProductionType)?.icon} {PRODUCTION_TYPES.find(p => p.id === selectedProductionType)?.label}</span>
+                <span className="text-gray-600 mx-0.5">·</span>
+                <span>{STYLE_CHIPS.find(s => s.id === selectedStyle)?.icon} {STYLE_CHIPS.find(s => s.id === selectedStyle)?.label}</span>
+                <span className="text-gray-600 mx-0.5">·</span>
+                <span>{selectedEpisodes}集</span>
+                <ChevronRight className={`w-3 h-3 transition-transform ${showAdvanced ? 'rotate-90' : ''}`} />
+              </button>
+            </div>
 
             {/* 创作按钮 */}
             <Button
@@ -316,7 +281,7 @@ export function HomeCreationPanel({
             </Button>
           </div>
 
-          {/* 展开的集数选择 */}
+          {/* 展开的选项面板：作品类型 + 风格 + 集数 */}
           <AnimatePresence>
             {showAdvanced && (
               <motion.div
@@ -325,26 +290,79 @@ export function HomeCreationPanel({
                 exit={{ opacity: 0, height: 0 }}
                 className="overflow-hidden"
               >
-                <div className="pt-4 mt-4 border-t border-white/5">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Film className="w-3.5 h-3.5 text-gray-400" />
-                    <span className="text-xs text-gray-400">集数设置</span>
+                <div className="pt-4 mt-4 border-t border-white/5 space-y-3">
+                  {/* 作品类型 */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Film className="w-3.5 h-3.5 text-gray-400" />
+                      <span className="text-xs text-gray-400">作品类型</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {PRODUCTION_TYPES.map((pt) => (
+                        <button
+                          key={pt.id}
+                          onClick={() => handleProductionTypeChange(pt.id)}
+                          disabled={isCreating}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap flex-shrink-0 ${
+                            selectedProductionType === pt.id
+                              ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40 shadow-sm shadow-blue-500/20'
+                              : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent'
+                          }`}
+                        >
+                          <span className="mr-1">{pt.icon}</span>
+                          {pt.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    {EPISODE_PRESETS.map((preset) => (
-                      <button
-                        key={preset.count}
-                        onClick={() => { setSelectedEpisodes(preset.count); setShowAdvanced(false); }}
-                        className={`flex-1 px-3 py-2.5 rounded-xl border transition-all text-center ${
-                          selectedEpisodes === preset.count
-                            ? 'border-purple-500/50 bg-purple-500/10 text-white'
-                            : 'border-white/10 bg-white/[0.02] text-gray-400 hover:border-white/20 hover:text-gray-300'
-                        }`}
-                      >
-                        <div className="text-sm font-medium">{preset.label}</div>
-                        <div className="text-[10px] opacity-60 mt-0.5">{preset.desc}</div>
-                      </button>
-                    ))}
+
+                  {/* 风格 */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Palette className="w-3.5 h-3.5 text-gray-400" />
+                      <span className="text-xs text-gray-400">视觉风格</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {STYLE_CHIPS.map((style) => (
+                        <button
+                          key={style.id}
+                          onClick={() => setSelectedStyle(style.id)}
+                          disabled={isCreating}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap flex-shrink-0 ${
+                            selectedStyle === style.id
+                              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm shadow-purple-500/20'
+                              : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent'
+                          }`}
+                        >
+                          <span className="mr-1">{style.icon}</span>
+                          {style.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 集数 */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Film className="w-3.5 h-3.5 text-gray-400" />
+                      <span className="text-xs text-gray-400">集数设置</span>
+                    </div>
+                    <div className="flex gap-2">
+                      {EPISODE_PRESETS.map((preset) => (
+                        <button
+                          key={preset.count}
+                          onClick={() => setSelectedEpisodes(preset.count)}
+                          className={`flex-1 px-3 py-2.5 rounded-xl border transition-all text-center ${
+                            selectedEpisodes === preset.count
+                              ? 'border-purple-500/50 bg-purple-500/10 text-white'
+                              : 'border-white/10 bg-white/[0.02] text-gray-400 hover:border-white/20 hover:text-gray-300'
+                          }`}
+                        >
+                          <div className="text-sm font-medium">{preset.label}</div>
+                          <div className="text-[10px] opacity-60 mt-0.5">{preset.desc}</div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </motion.div>

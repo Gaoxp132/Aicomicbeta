@@ -30,7 +30,7 @@ export function useHlsPlayer({ videoUrl, currentIndex, isMuted, isPlaying }: Use
     setIsSigningUrl(true);
     const result = await apiPost('oss/sign-url', { url });
     setIsSigningUrl(false);
-    if (result.success && result.data?.signedUrl) return result.data.signedUrl;
+    if (result.success && result.data?.signedUrl) return String(result.data.signedUrl);
     console.warn('[useHlsPlayer] Sign URL response invalid');
     return url;
   };
@@ -75,8 +75,8 @@ export function useHlsPlayer({ videoUrl, currentIndex, isMuted, isPlaying }: Use
 export interface PlaylistVideo { sceneNumber: number; url: string; duration: number; title?: string; thumbnail?: string | null; }
 export interface Playlist { type?: string; version?: string; episodeId: string; totalVideos: number; totalDuration: number; createdAt: string; videos: PlaylistVideo[]; }
 
-async function signOssUrl(url: string): Promise<string> { const r = await apiPost('oss/sign-url', { url }); return r.success && r.data?.signedUrl ? r.data.signedUrl : url; }
-async function fetchViaProxy(url: string): Promise<any> { const r = await apiPost('oss/fetch-json', { url }); if (r.success && r.data) return r.data; throw new Error(r.error || 'Backend proxy fetch failed'); }
+async function signOssUrl(url: string): Promise<string> { const r = await apiPost('oss/sign-url', { url }); return r.success && r.data?.signedUrl ? String(r.data.signedUrl) : url; }
+async function fetchViaProxy(url: string): Promise<Record<string, unknown>> { const r = await apiPost('oss/fetch-json', { url }); if (r.success && r.data) return r.data as Record<string, unknown>; throw new Error(String(r.error || 'Backend proxy fetch failed')); }
 
 async function batchSignOssUrls(videos: PlaylistVideo[]): Promise<PlaylistVideo[]> {
   const ossUrls = videos.filter(v => v.url && (v.url.includes('aliyuncs.com') || v.url.includes('oss-'))).map(v => v.url);
@@ -84,19 +84,31 @@ async function batchSignOssUrls(videos: PlaylistVideo[]): Promise<PlaylistVideo[
   const result = await apiPost('oss/sign-urls', { urls: ossUrls, expiresIn: 7200 }, { timeout: 10000 });
   if (result.success && result.data?.results) {
     const urlMap = new Map<string, string>();
-    result.data.results.forEach((r: any) => { if (r.success && r.signedUrl) urlMap.set(r.originalUrl, r.signedUrl); });
+    (result.data.results as Array<{ success?: boolean; signedUrl?: string; originalUrl?: string }>).forEach((r) => { if (r.success && r.signedUrl) urlMap.set(r.originalUrl!, r.signedUrl); });
     return videos.map(v => urlMap.has(v.url) ? { ...v, url: urlMap.get(v.url)! } : v);
   }
   return videos.map(v => { try { const u = new URL(v.url); ['OSSAccessKeyId', 'Expires', 'Signature', 'security-token'].forEach(p => u.searchParams.delete(p)); return { ...v, url: u.toString() }; } catch { return v; } });
 }
 
-function normalizePlaylist(data: any): Playlist {
+interface RawPlaylistData {
+  videos?: Array<Record<string, unknown>>;
+  segments?: Array<Record<string, unknown>>;
+  totalVideos?: number;
+  type?: string;
+  version?: string;
+  episodeId?: string;
+  totalDuration?: number;
+  createdAt?: string;
+  [key: string]: unknown;
+}
+
+function normalizePlaylist(data: RawPlaylistData): Playlist {
   if (!data.videos && Array.isArray(data.segments)) {
-    data.videos = data.segments.map((seg: any) => ({ sceneNumber: seg.sceneNumber, url: seg.videoUrl || seg.url, duration: seg.duration || 10, title: seg.description || seg.title, thumbnail: seg.thumbnailUrl || seg.thumbnail || null }));
+    data.videos = data.segments.map((seg: Record<string, unknown>) => ({ sceneNumber: seg.sceneNumber, url: (seg.videoUrl as string) || (seg.url as string), duration: (seg.duration as number) || 10, title: (seg.description as string) || (seg.title as string), thumbnail: (seg.thumbnailUrl as string) || (seg.thumbnail as string) || null }));
     data.totalVideos = data.videos.length;
   }
-  if (data.videos) { data.videos = data.videos.map((v: any) => ({ ...v, url: v.url || v.videoUrl, title: v.title || v.description, thumbnail: v.thumbnail || v.thumbnailUrl || null })); }
-  return data as Playlist;
+  if (data.videos) { data.videos = data.videos.map((v: Record<string, unknown>) => ({ ...v, url: (v.url as string) || (v.videoUrl as string), title: (v.title as string) || (v.description as string), thumbnail: (v.thumbnail as string) || (v.thumbnailUrl as string) || null })); }
+  return data as unknown as Playlist;
 }
 
 export function usePlaylistLoader(playlistUrl: string) {

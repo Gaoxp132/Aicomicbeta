@@ -19,22 +19,25 @@ export const supabase = createClient(
   { db: { schema: 'public' }, auth: { persistSession: false, autoRefreshToken: false } }
 );
 
+// Recursive JSON-safe value type for case-conversion utilities
+type JsonValue = string | number | boolean | null | undefined | JsonValue[] | { [key: string]: JsonValue };
+
 // Snake_case → camelCase 转换
 function snakeToCamel(str: string): string {
   return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 }
 
-export function toCamelCase(obj: any): any {
+export function toCamelCase<T extends JsonValue>(obj: T): T {
   if (obj === null || obj === undefined) return obj;
-  if (Array.isArray(obj)) return obj.map(item => toCamelCase(item));
-  if (typeof obj === 'object' && obj.constructor === Object) {
-    const result: any = {};
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key)) {
-        result[snakeToCamel(key)] = toCamelCase(obj[key]);
+  if (Array.isArray(obj)) return obj.map(item => toCamelCase(item)) as T;
+  if (typeof obj === 'object' && (obj as object).constructor === Object) {
+    const result: Record<string, JsonValue> = {};
+    for (const key in obj as Record<string, JsonValue>) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        result[snakeToCamel(key)] = toCamelCase((obj as Record<string, JsonValue>)[key]);
       }
     }
-    return result;
+    return result as T;
   }
   return obj;
 }
@@ -44,24 +47,54 @@ function camelToSnake(str: string): string {
   return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
 }
 
-export function toSnakeCase(obj: any): any {
+export function toSnakeCase<T extends JsonValue>(obj: T): T {
   if (obj === null || obj === undefined) return obj;
-  if (Array.isArray(obj)) return obj.map(item => toSnakeCase(item));
-  if (typeof obj === 'object' && obj.constructor === Object) {
-    const result: any = {};
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key)) {
-        result[camelToSnake(key)] = toSnakeCase(obj[key]);
+  if (Array.isArray(obj)) return obj.map(item => toSnakeCase(item)) as T;
+  if (typeof obj === 'object' && (obj as object).constructor === Object) {
+    const result: Record<string, JsonValue> = {};
+    for (const key in obj as Record<string, JsonValue>) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        result[camelToSnake(key)] = toSnakeCase((obj as Record<string, JsonValue>)[key]);
       }
     }
-    return result;
+    return result as T;
   }
   return obj;
 }
 
+// 安全提取错误消息（用于 catch (error: unknown) 场景）
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object' && 'message' in error && typeof (error as { message: unknown }).message === 'string') {
+    return (error as { message: string }).message;
+  }
+  return String(error);
+}
+
+// 安全提取错误名称（用于判断 TimeoutError/AbortError 等）
+export function getErrorName(error: unknown): string {
+  if (error instanceof Error) return error.name;
+  if (error && typeof error === 'object' && 'name' in error && typeof (error as { name: unknown }).name === 'string') {
+    return (error as { name: string }).name;
+  }
+  return '';
+}
+
+// 类型守卫：concatMP4 抛出的分辨率不匹配错误
+export interface ResolutionMismatchDetail {
+  resolutionMismatch: true;
+  mismatchedSegmentIndices?: number[];
+  majorityResolution?: string;
+  message: string;
+}
+export function isResolutionMismatchError(e: unknown): e is ResolutionMismatchDetail {
+  return typeof e === 'object' && e !== null && 'resolutionMismatch' in e && (e as Record<string, unknown>).resolutionMismatch === true;
+}
+
 // 错误信息截断（含 Cloudflare HTML 错误页面检测）
-export function truncateErrorMsg(error: any): string {
-  const msg = error?.message || String(error);
+export function truncateErrorMsg(error: unknown): string {
+  const msg = getErrorMessage(error);
   if (msg.includes('<!DOCTYPE') || msg.includes('<html')) {
     const titleMatch = msg.match(/<title[^>]*>(.*?)<\/title>/i);
     return titleMatch ? `Cloudflare: ${titleMatch[1].trim()}` : 'Cloudflare HTML error page';
@@ -70,8 +103,8 @@ export function truncateErrorMsg(error: any): string {
 }
 
 // 判断错误是否可重试
-export function isRetryableError(error: any): boolean {
-  const msg = error?.message || String(error);
+export function isRetryableError(error: unknown): boolean {
+  const msg = getErrorMessage(error);
   return (
     msg.includes('upstream connect error') ||
     msg.includes('connection timeout') ||
@@ -87,13 +120,16 @@ export function isRetryableError(error: any): boolean {
   );
 }
 
+// Supabase 查询错误的最小类型（兼容 PostgrestError）
+interface QueryError { message: string; details?: string; hint?: string; code?: string }
+
 // 数据库查询重试（带指数退避）
 export async function queryWithRetry<T>(
-  queryFn: () => PromiseLike<{ data: T | null; error: any; count?: number | null }>,
+  queryFn: () => PromiseLike<{ data: T | null; error: QueryError | null; count?: number | null }>,
   label: string,
   maxRetries = 2,
   baseDelay = 1000
-): Promise<{ data: T | null; error: any; count?: number | null }> {
+): Promise<{ data: T | null; error: QueryError | null; count?: number | null }> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const result = await queryFn();
     if (!result.error) return result;

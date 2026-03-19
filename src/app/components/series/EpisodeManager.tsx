@@ -16,7 +16,7 @@ interface EpisodeManagerProps {
 }
 
 export function EpisodeManager({ series, onEpisodeSelect, onEpisodesUpdate, onSeriesUpdate, userPhone }: EpisodeManagerProps) {
-  const [videoErrors, setVideoErrors] = useState<Record<string, any>>({});
+  const [videoErrors, setVideoErrors] = useState<Record<string, Record<string, unknown>>>({}); // 修改类型
   const [alertDismissed, setAlertDismissed] = useState(false);
   const [currentPlayingEpisodeId, setCurrentPlayingEpisodeId] = useState<string | null>(null);
   const [expandedVideoEpisodeId, setExpandedVideoEpisodeId] = useState<string | null>(null);
@@ -285,12 +285,12 @@ interface EpisodeListRendererProps {
   useVirtualList: boolean;
   expandedVideoEpisodeId: string | null;
   currentPlayingEpisodeId: string | null;
-  videoErrors: Record<string, any>;
+  videoErrors: Record<string, Record<string, unknown>>; // 修改类型
   aspectRatio?: string;
   onEpisodeSelect: (episode: Episode) => void;
   setExpandedVideoEpisodeId: (id: string | null) => void;
   setCurrentPlayingEpisodeId: (id: string | null) => void;
-  setVideoErrors: (errors: Record<string, any>) => void;
+  setVideoErrors: (errors: Record<string, Record<string, unknown>>) => void; // 修改类型
   handleRepairSingleEpisode: (episodeId: string) => void;
 }
 
@@ -307,12 +307,12 @@ function EpisodeListRenderer({
   setVideoErrors,
   handleRepairSingleEpisode,
 }: EpisodeListRendererProps) {
-  const handleVideoError = useCallback((episodeId: string, errorInfo: any) => {
-    setVideoErrors((prev: Record<string, any>) => ({ ...prev, [episodeId]: errorInfo }));
+  const handleVideoError = useCallback((episodeId: string, errorInfo: Record<string, unknown>) => {
+    setVideoErrors((prev: Record<string, Record<string, unknown>>) => ({ ...prev, [episodeId]: errorInfo }));
   }, [setVideoErrors]);
 
   const handleVideoLoaded = useCallback((episodeId: string) => {
-    setVideoErrors((prev: Record<string, any>) => {
+    setVideoErrors((prev: Record<string, Record<string, unknown>>) => {
       const newErrors = { ...prev };
       delete newErrors[episodeId];
       return newErrors;

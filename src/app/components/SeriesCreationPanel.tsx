@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Film, Plus, RefreshCw, BookOpen, Users, Grid3x3 } from 'lucide-react';
+import { Film, Plus, RefreshCw, BookOpen, Users, Grid3x3, Clapperboard, Megaphone, Video } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from './ui';
 import { SeriesListView } from './series/SeriesListView';
@@ -23,7 +23,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
   const [selectedSeries, setSelectedSeries] = useState<Series | null>(initialSeries || null);
   const { series, isLoading, error, addSeries, updateSeriesLocal, removeSeriesLocal, loadSeries } = useSeries(userPhone);
 
-  // 🆕 追踪"正在生成中"的漫剧ID，用于检测完成并自动生成视频
+  // 🆕 追踪"正在生成中"的作品ID，用于检测完成并自动生成视频
   const generatingSeriesIds = useRef<Set<string>>(new Set());
   // 防止重复触发视频生成
   const videoGenTriggered = useRef<Set<string>>(new Set());
@@ -43,11 +43,11 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
     }
   }, [error]);
 
-  // 🆕 核心修复：检测AI漫剧从 generating → completed，自动触发视频生成
+  // 🆕 核心修复：检测AI作品从 generating → completed，自动触发视频生成
   useEffect(() => {
     if (!Array.isArray(series) || !userPhone) return;
 
-    // 1. 收集当前正在生成中的漫剧ID
+    // 1. 收集当前正在生成中的作品ID
     const currentGenerating = new Set<string>();
     series.forEach(s => {
       if (s.status === 'generating' || s.status === 'in-progress') {
@@ -55,14 +55,14 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
       }
     });
 
-    // 2. 找出 "之前在生成中、现在已完成" 的漫剧
+    // 2. 找出 "之前在生成中、现在已完成" 的作品
     const justCompleted = series.filter(s =>
       s.status === 'completed' &&
       generatingSeriesIds.current.has(s.id) &&
       !videoGenTriggered.current.has(s.id)
     );
 
-    // 3. 对刚完成的漫剧自动触发视频生成
+    // 3. 对刚完成的作品自动触发视频生成
     for (const completedSeries of justCompleted) {
       videoGenTriggered.current.add(completedSeries.id);
       
@@ -80,7 +80,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
           }
           const fullSeries = detailResult.data;
           const hasStoryboards = fullSeries.episodes?.some(
-            (ep: any) => ep.storyboards && ep.storyboards.length > 0
+            (ep: { storyboards?: unknown[] }) => ep.storyboards && ep.storyboards.length > 0
           );
 
           if (hasStoryboards) {
@@ -125,7 +125,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
     if (newSeries.status === 'generating') {
       setView('list');
       setSelectedSeries(null);
-      // 标记这个漫剧正在生成中，以便完成后自动触发视频生成
+      // 标记这个作品正在生成中，以便完成后自动触发视频生成
       generatingSeriesIds.current.add(newSeries.id);
       
       toast.success('✨ AI创作已开始！剧本完成后将自动生成视频，请稍候。');
@@ -142,11 +142,11 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
       return;
     }
     
-    // 否则跳转到编辑页面（只有已完成的漫剧才会进入编辑）
+    // 否则跳转到编辑页面（只有已完成的作品才会进入编辑）
     setSelectedSeries(newSeries);
     setView('edit');
     
-    // v6.0: 已完成的漫剧也通过 useEffect 统一路径触发视频生成
+    // v6.0: 已完成的作品也通过 useEffect 统一路径触发视频生成
     // 标记为 "已完成但需要视频生成" — 同样由 useEffect + batchVideoService 全局去重保护
     if (userPhone && newSeries.episodes && newSeries.episodes.length > 0) {
       const hasStoryboards = newSeries.episodes.some(
@@ -155,7 +155,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
       
       if (hasStoryboards && !videoGenTriggered.current.has(newSeries.id)) {
         videoGenTriggered.current.add(newSeries.id);
-        toast.success('漫剧创作完成！正在自动生成视频...', { duration: 4000 });
+        toast.success('作品创作完成！正在自动生成视频...', { duration: 4000 });
         
         setTimeout(async () => {
           try {
@@ -191,7 +191,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
         setView('edit');
       } else {
         console.error('[SeriesCreationPanel] Failed to load series details:', result.error);
-        toast.error(`加载漫剧详情失败：${result.error}`);
+        toast.error(`加载作品详情失败：${result.error}`);
       }
     } catch (error: unknown) {
       console.error('[SeriesCreationPanel] Error loading series details:', error);
@@ -241,8 +241,8 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
                     <Film className="w-5 h-5 sm:w-6 sm:h-6 text-purple-400" />
                   </div>
                   <div>
-                    <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white">漫剧创作</h1>
-                    <p className="text-xs sm:text-sm text-gray-400 mt-1">创作属于你的连续剧集</p>
+                    <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white">影视创作</h1>
+                    <p className="text-xs sm:text-sm text-gray-400 mt-1">创作属于你的影视作品</p>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -251,7 +251,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
                     className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
                   >
                     <Plus className="w-4 h-4 mr-2" />
-                    新建漫剧
+                    新建作品
                   </Button>
                   <Button
                     onClick={loadSeries}
@@ -265,7 +265,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
               </div>
 
               {/* 功能特色卡片 */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-4 border border-white/10">
                   <div className="flex items-center gap-3 mb-2">
                     <BookOpen className="w-5 h-5 text-blue-400" />
@@ -282,6 +282,13 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
                 </div>
                 <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-4 border border-white/10">
                   <div className="flex items-center gap-3 mb-2">
+                    <Megaphone className="w-5 h-5 text-amber-400" />
+                    <h3 className="text-white font-medium">品牌宣传</h3>
+                  </div>
+                  <p className="text-sm text-gray-400">世界一流的产品与品牌宣传素材</p>
+                </div>
+                <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-4 border border-white/10">
+                  <div className="flex items-center gap-3 mb-2">
                     <Grid3x3 className="w-5 h-5 text-pink-400" />
                     <h3 className="text-white font-medium">分镜编辑</h3>
                   </div>
@@ -290,7 +297,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
               </div>
             </div>
 
-            {/* 漫剧列表 */}
+            {/* 作品列表 */}
             <SeriesListView
               series={series}
               onEdit={handleEditSeries}

@@ -47,7 +47,8 @@ export async function getUserWorks(phone: string, page: number = 1, limit: numbe
     const queryParams = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
     const response = await apiGet(`/community/user/${phone}/works?${queryParams.toString()}`);
     if (response && response.success) {
-      return { success: true, works: response.works || response.data?.works || [], total: response.total || response.data?.total || 0 };
+      const rd = response.data as Record<string, unknown> | undefined;
+      return { success: true, works: (response.works || rd?.works || []) as Record<string, unknown>[], total: Number(response.total || rd?.total || 0) };
     }
     return { success: false, works: [], total: 0, error: response?.error || 'Failed to fetch user works' };
   } catch (error: unknown) {
@@ -81,18 +82,21 @@ export async function refreshVideoUrl(workId: string) {
     try {
       const response = await apiPost(`/community/works/${workId}/refresh-video`);
       if (response.success && response.data) {
-        return { success: true, videoUrl: response.data.videoUrl, thumbnailUrl: response.data.thumbnailUrl };
+        const d = response.data as { videoUrl?: string; thumbnailUrl?: string };
+        return { success: true, videoUrl: d.videoUrl, thumbnailUrl: d.thumbnailUrl };
       }
     } catch (_newRouteError: unknown) { /* fallback */ }
     const worksResponse = await apiGet(`/community/works`);
     if (worksResponse.success && worksResponse.data?.works) {
-      const work = worksResponse.data.works.find((w: any) => w.id === workId);
+      const works = worksResponse.data.works as Record<string, unknown>[];
+      const work = works.find((w) => w.id === workId);
       if (work && work.task_id) {
         const taskResponse = await apiGet(`/volcengine/status/${work.task_id}`);
         if (taskResponse.success && taskResponse.data) {
           const taskData = taskResponse.data;
-          const newVideoUrl = taskData.content?.video_url || taskData.video_url || "";
-          const newThumbnailUrl = taskData.content?.cover_url || taskData.cover_url || "";
+          const content = taskData.content as Record<string, unknown> | undefined;
+          const newVideoUrl = String(content?.video_url || taskData.video_url || "");
+          const newThumbnailUrl = String(content?.cover_url || taskData.cover_url || "");
           if (newVideoUrl) {
             await apiPost(`/community/publish`, {
               phone: work.user_phone, taskId: work.task_id, title: work.title,
@@ -126,7 +130,7 @@ export async function getTaskStatus(taskIds: string[]) {
 export async function retryVideo(taskId: string) {
   try {
     const response = await apiPost(`/volcengine/retry/${taskId}`, {});
-    if (response.success && response.data) return { success: true, newTaskId: response.data.task_id };
+    if (response.success && response.data) return { success: true, newTaskId: String(response.data.task_id) };
     return { success: false, error: response.error || '重新生成失败' };
   } catch (error: unknown) {
     console.error('[retryVideo] Error:', error);
@@ -138,13 +142,13 @@ export async function getUserProfile(userPhone: string) {
   try {
     const response = await apiGet(`/user/profile/${userPhone}`);
     if (response && response.success) {
-      const user = response.user || response.data;
+      const user = (response.user || response.data) as Record<string, unknown> | undefined;
       return {
         success: true,
         user: {
-          phone: user?.phone || userPhone,
-          nickname: user?.username || user?.nickname || `用户${userPhone.slice(-4)}`,
-          avatar: user?.avatarUrl || user?.avatar_url || user?.avatar || '',
+          phone: String(user?.phone || userPhone),
+          nickname: String(user?.username || user?.nickname || `用户${userPhone.slice(-4)}`),
+          avatar: String(user?.avatarUrl || user?.avatar_url || user?.avatar || ''),
         },
       };
     }
@@ -170,8 +174,8 @@ export async function getLikeStatus(workId: string, userPhone: string) {
     if (response && response.success) {
       return {
         success: true,
-        isLiked: response.isLiked || response.data?.isLiked || false,
-        likes: response.likes || response.data?.likes || 0,
+        isLiked: Boolean(response.isLiked || response.data?.isLiked || false),
+        likes: Number(response.likes || response.data?.likes || 0),
       };
     }
     return { success: false, isLiked: false, likes: 0, error: response?.error || 'Failed to fetch like status' };
@@ -221,11 +225,11 @@ export async function getCommunitySeries(params: {
     const response = await apiGet(`/community/series?${queryParams}`, { timeout: 60000, maxRetries: 2 });
     if (response.success) {
       return {
-        success: true, data: response.data || [],
-        total: response.total || response.data?.length || 0,
-        page: response.page || params.page || 1,
-        limit: response.limit || params.limit || 20,
-        hasMore: response.hasMore || false,
+        success: true, data: (response.data || []) as CommunitySeriesWork[],
+        total: Number(response.total || (Array.isArray(response.data) ? (response.data as unknown[]).length : 0) || 0),
+        page: Number(response.page || params.page || 1),
+        limit: Number(response.limit || params.limit || 20),
+        hasMore: Boolean(response.hasMore || false),
       };
     }
     return { ...defaultResult, error: response.error || '加载失败' };
@@ -238,7 +242,7 @@ export async function getSeriesDetail(seriesId: string, userPhone?: string): Pro
   try {
     const queryParams = userPhone ? `?userPhone=${userPhone}` : '';
     const response = await apiGet(`/community/series/${seriesId}${queryParams}`, { timeout: 30000, maxRetries: 2 });
-    if (response.success) return { success: true, data: response.data };
+    if (response.success) return { success: true, data: response.data as CommunitySeriesWork };
     return { success: false, error: response.error || '获取详情失败' };
   } catch (error: unknown) {
     return { success: false, error: getErrorMessage(error) };
@@ -251,8 +255,8 @@ export async function likeSeries(seriesId: string, userPhone: string): Promise<{
     if (response.success) {
       return {
         success: true,
-        isLiked: response.isLiked ?? response.data?.isLiked ?? true,
-        likes: response.likes ?? response.data?.likes ?? 0,
+        isLiked: Boolean(response.isLiked ?? response.data?.isLiked ?? true),
+        likes: Number(response.likes ?? response.data?.likes ?? 0),
       };
     }
     return { success: false, error: response.error || '点赞失败' };
@@ -270,10 +274,10 @@ export async function commentSeries(seriesId: string, userPhone: string, content
   }
 }
 
-export async function getSeriesComments(seriesId: string, page: number = 1, limit: number = 20): Promise<{ success: boolean; data: any[]; error?: string }> {
+export async function getSeriesComments(seriesId: string, page: number = 1, limit: number = 20): Promise<{ success: boolean; data: Record<string, unknown>[]; error?: string }> {
   try {
     const response = await apiGet(`/community/works/${seriesId}/comments?page=${page}&limit=${limit}`, { silent: true });
-    if (response.success) return { success: true, data: response.data || response.comments || [] };
+    if (response.success) return { success: true, data: (response.data || response.comments || []) as Record<string, unknown>[] };
     return { success: false, data: [], error: response.error };
   } catch (error: unknown) {
     return { success: false, data: [], error: getErrorMessage(error) };

@@ -150,13 +150,15 @@ export function concatMP4(segments: Uint8Array[], options?: ConcatOptions): Conc
     const errorMsg = `视频分辨率不一致，无法合并。${preferred ? `目标分辨率: ${bestKey}` : `主流分辨率: ${bestKey} (${bestCount}/${segInfos.length}段)`}，不匹配: ${mismatchDetails.join('; ')}。请重新生成分辨率不一致的分镜视频后再合并。`;
     console.error(`[MP4Concat] ❌ Resolution mismatch — REJECTING merge. ${errorMsg}`);
     // Attach metadata for caller to extract mismatched segment indices
-    const err = new Error(errorMsg) as any;
-    err.resolutionMismatch = true;
-    err.majorityResolution = bestKey;
-    err.mismatchedSegmentIndices = [];
+    const mismatchedSegmentIndices: number[] = [];
     for (const [key, indices] of resVotes) {
-      if (key !== bestKey) err.mismatchedSegmentIndices.push(...indices);
+      if (key !== bestKey) mismatchedSegmentIndices.push(...indices);
     }
+    const err = Object.assign(new Error(errorMsg), {
+      resolutionMismatch: true as const,
+      majorityResolution: bestKey,
+      mismatchedSegmentIndices,
+    });
     throw err;
   } else {
     const resKey = resVotes.keys().next().value;

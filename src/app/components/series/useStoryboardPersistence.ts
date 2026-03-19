@@ -78,10 +78,10 @@ export function useStoryboardPersistence({
           body: JSON.stringify({ items }),
         });
         if (!resp.ok) {
-          const err = await resp.json().catch(() => ({})) as Record<string, any>;
+          const err = await resp.json().catch(() => ({})) as Record<string, unknown>;
           console.warn(`[StoryboardEditor] Sort order persist failed:`, err.error || resp.status);
         } else {
-          const result = await resp.json();
+          const result = await resp.json() as Record<string, unknown>;
           console.log(`[StoryboardEditor] Sort order persisted: ${result.updated} updated, ${result.failed} failed`);
         }
       } catch (err: unknown) {
@@ -98,7 +98,7 @@ export function useStoryboardPersistence({
           headers: { 'Authorization': `Bearer ${publicAnonKey}` },
         });
         if (!resp.ok) {
-          const err = await resp.json().catch(() => ({})) as Record<string, any>;
+          const err = await resp.json().catch(() => ({})) as Record<string, unknown>;
           console.warn(`[StoryboardEditor] Delete storyboard failed:`, err.error || resp.status);
         } else {
           console.log(`[StoryboardEditor] Deleted storyboard ${deletedIds[0]} from DB`);
@@ -110,7 +110,7 @@ export function useStoryboardPersistence({
           body: JSON.stringify({ ids: deletedIds }),
         });
         if (!resp.ok) {
-          const err = await resp.json().catch(() => ({})) as Record<string, any>;
+          const err = await resp.json().catch(() => ({})) as Record<string, unknown>;
           console.warn(`[StoryboardEditor] Batch delete storyboards failed:`, err.error || resp.status);
         } else {
           const result = await resp.json();
@@ -145,12 +145,13 @@ export function useStoryboardPersistence({
         }),
       });
       if (!resp.ok) {
-        const err: Record<string, any> = await resp.json().catch(() => ({}));
+        const err: Record<string, unknown> = await resp.json().catch(() => ({}));
         console.warn(`[StoryboardEditor] Create storyboard failed:`, err.error || resp.status);
         return;
       }
-      const result = await resp.json();
-      const realId = result.data?.id;
+      const result = await resp.json() as Record<string, unknown>;
+      const resultData = result.data as Record<string, unknown> | undefined;
+      const realId = resultData?.id as string | undefined;
       if (realId && realId !== tempId) {
         updateStoryboards(prev => prev.map(s => s.id === tempId ? { ...s, id: realId } : s));
         console.log(`[StoryboardEditor] Created storyboard ${realId} (replaced temp ${tempId})`);
@@ -180,7 +181,7 @@ export function useStoryboardPersistence({
         }),
       });
       if (!resp.ok) {
-        const err: Record<string, any> = await resp.json().catch(() => ({}));
+        const err: Record<string, unknown> = await resp.json().catch(() => ({}));
         console.warn(`[StoryboardEditor] Edit storyboard failed:`, err.error || resp.status);
       } else {
         console.log(`[StoryboardEditor] Persisted edit for storyboard ${sbId}`);

@@ -24,7 +24,28 @@ interface ScreenOrientation {
   unlock?: () => void;
 }
 
+/** Minimal hls.js class shape — covers usage in hls-shim.ts and viewer hooks */
+interface HlsInstance {
+  loadSource(src: string): void;
+  attachMedia(media: HTMLMediaElement): void;
+  destroy(): void;
+  on(event: string, handler: (...args: unknown[]) => void): void;
+  off(event: string, handler: (...args: unknown[]) => void): void;
+  readonly levels: Array<{ height?: number; width?: number; bitrate?: number }>;
+  currentLevel: number;
+  startLevel: number;
+}
+
+interface HlsConstructor {
+  new (config?: Record<string, unknown>): HlsInstance;
+  isSupported(): boolean;
+  Events: Record<string, string>;
+  ErrorTypes: Record<string, string>;
+  /** Allow access to additional static properties from CDN build */
+  [key: string]: unknown;
+}
+
 interface Window {
   /** hls.js CDN global — loaded dynamically by hls-shim.ts */
-  Hls?: any;
+  Hls?: HlsConstructor;
 }

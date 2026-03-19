@@ -180,14 +180,14 @@ export function SeriesFixTool({ seriesId, onFixed }: { seriesId: string; onFixed
   const handleDiagnose = async () => {
     setIsDiagnosing(true); setDiagnosis(null);
     const result = await apiPost(`/series/${seriesId}/diagnose`);
-    const diag = (result as Record<string, any>).diagnosis;
+    const diag = (result as Record<string, unknown>).diagnosis;
     if (result.success && diag) { setDiagnosis(diag); if (diag.issues.length === 0) toast.success('未检测到问题，数据完整！'); else toast.warning(`检测到 ${diag.issues.length} 个问题`); }
     else toast.error('诊断失败：' + (result.error || '未知错误'));
     setIsDiagnosing(false);
   };
 
   const handleFix = async () => {
-    if (!diagnosis || !diagnosis.fixable) { toast.error('该漫剧无法自动修复'); return; }
+    if (!diagnosis || !diagnosis.fixable) { toast.error('该作品无法自动修复'); return; }
     setIsFixing(true);
     const result = await apiPost(`/series/${seriesId}/fix-episodes`);
     if (result.success) { toast.success('修复任务已启动，请稍候刷新页面查看结果'); setTimeout(() => { onFixed?.(); }, 5000); }
