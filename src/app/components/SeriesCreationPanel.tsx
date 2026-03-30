@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Film, Plus, RefreshCw, BookOpen, Users, Grid3x3, Clapperboard, Megaphone, Video } from 'lucide-react';
+import { Film, Plus, RefreshCw, BookOpen, Users, Grid3x3, Megaphone } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from './ui';
 import { SeriesListView } from './series/SeriesListView';
@@ -9,6 +9,7 @@ import { SeriesEditor } from './series/SeriesEditor';
 import { useSeries } from '../hooks/media';
 import * as seriesService from '../services';
 import type { Series } from '../types';
+import { SERIES_WORKBENCH_PENCIL_BLUEPRINT } from '../constants/pencilUi';
 import { getErrorMessage } from '../utils';
 
 interface SeriesCreationPanelProps {
@@ -18,7 +19,15 @@ interface SeriesCreationPanelProps {
   onSeriesDeleted?: (seriesId: string) => void; // v6.0.6: 通知 App 层清理相关任务
 }
 
+const WORKBENCH_FEATURE_ICON_MAP = {
+  'book-open': BookOpen,
+  users: Users,
+  megaphone: Megaphone,
+  'grid-3x3': Grid3x3,
+} as const;
+
 export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeriesDeleted }: SeriesCreationPanelProps) {
+  const blueprint = SERIES_WORKBENCH_PENCIL_BLUEPRINT;
   const [view, setView] = useState<'list' | 'create' | 'edit'>(initialSeries ? 'edit' : 'list');
   const [selectedSeries, setSelectedSeries] = useState<Series | null>(initialSeries || null);
   const { series, isLoading, error, addSeries, updateSeriesLocal, removeSeriesLocal, loadSeries } = useSeries(userPhone);
@@ -241,8 +250,8 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
                     <Film className="w-5 h-5 sm:w-6 sm:h-6 text-purple-400" />
                   </div>
                   <div>
-                    <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white">影视创作</h1>
-                    <p className="text-xs sm:text-sm text-gray-400 mt-1">创作属于你的影视作品</p>
+                    <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white">{blueprint.header.title}</h1>
+                    <p className="text-xs sm:text-sm text-gray-400 mt-1">{blueprint.header.subtitle}</p>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -251,7 +260,7 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
                     className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
                   >
                     <Plus className="w-4 h-4 mr-2" />
-                    新建作品
+                    {blueprint.actions.createLabel}
                   </Button>
                   <Button
                     onClick={loadSeries}
@@ -259,41 +268,25 @@ export function SeriesCreationPanel({ userPhone, initialSeries, onBack, onSeries
                     className="border-white/20 text-white hover:bg-white/10"
                   >
                     <RefreshCw className="w-4 h-4 mr-2" />
-                    刷新
+                    {blueprint.actions.refreshLabel}
                   </Button>
                 </div>
               </div>
 
               {/* 功能特色卡片 */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-4 border border-white/10">
-                  <div className="flex items-center gap-3 mb-2">
-                    <BookOpen className="w-5 h-5 text-blue-400" />
-                    <h3 className="text-white font-medium">分集创作</h3>
-                  </div>
-                  <p className="text-sm text-gray-400">支持多集连续剧情，完整故事线</p>
-                </div>
-                <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-4 border border-white/10">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Users className="w-5 h-5 text-purple-400" />
-                    <h3 className="text-white font-medium">智能角色</h3>
-                  </div>
-                  <p className="text-sm text-gray-400">AI自动提取和管理角色信息</p>
-                </div>
-                <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-4 border border-white/10">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Megaphone className="w-5 h-5 text-amber-400" />
-                    <h3 className="text-white font-medium">品牌宣传</h3>
-                  </div>
-                  <p className="text-sm text-gray-400">世界一流的产品与品牌宣传素材</p>
-                </div>
-                <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-4 border border-white/10">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Grid3x3 className="w-5 h-5 text-pink-400" />
-                    <h3 className="text-white font-medium">分镜编辑</h3>
-                  </div>
-                  <p className="text-sm text-gray-400">可视化分镜编辑和视频生成</p>
-                </div>
+                {blueprint.features.map((feature) => {
+                  const Icon = WORKBENCH_FEATURE_ICON_MAP[feature.icon];
+                  return (
+                    <div key={feature.id} className="bg-white/5 backdrop-blur-xl rounded-2xl p-4 border border-white/10">
+                      <div className="flex items-center gap-3 mb-2">
+                        <Icon className={`w-5 h-5 ${feature.colorClass}`} />
+                        <h3 className="text-white font-medium">{feature.title}</h3>
+                      </div>
+                      <p className="text-sm text-gray-400">{feature.desc}</p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

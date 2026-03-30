@@ -1,6 +1,7 @@
 /**
- * v6.0.200: 视频尾帧提取工具
+ * v6.0.202: 视频尾帧提取工具
  * 从浏览器 <video> 元素中提取视频的最后一帧，用于场景间首尾帧衔接
+ * canvas 失败时（Volcengine CDN CORS）回退到服务端 OSS 截帧
  */
 
 import { apiRequest } from '../utils';
@@ -73,42 +74,78 @@ export function extractLastFrame(videoUrl: string): Promise<string | null> {
   });
 }
 
-// 缓存已上传的 storyboardId，避免重复上传
-const _uploadedIds = new Set<string>();
+// v6.0.203: 按 taskId 去重，避免同一 storyboard 重生成后被错误拦截
+const _processedTaskIds = new Set<string>();
+const _inflightTaskIds = new Set<string>();
 
 /**
- * 提取视频尾帧并上传到服务器（fire-and-forget）
- * 服务端OSS截帧会自动尝试，此函数是浏览器端的fallback
+ * 提取视频尾帧并上传到服务器
+ * 优先级: 1) 客户端 canvas 截帧（OSS 视频，CORS 已配置）
+ *         2) 服务端 OSS 截帧触发（canvas CORS 失败时的回退）
  */
 export async function extractAndUploadLastFrame(
   videoUrl: string,
   seriesId: string,
   storyboardId: string,
 ): Promise<void> {
-  if (_uploadedIds.has(storyboardId)) return;
-  _uploadedIds.add(storyboardId);
-
+  let inflightTaskId = '';
   try {
     // 查找此分镜对应的 taskId
     const result = await apiRequest(`/series/${seriesId}/video-task-status`, {
       method: 'GET', timeout: 10000, maxRetries: 1, silent: true,
     });
-    const tasks = result?.storyboardTasks as Record<string, { taskId?: string; lastFrameUrl?: string }> | undefined;
+    const tasks = result?.storyboardTasks as Record<string, {
+      taskId?: string;
+      lastFrameUrl?: string;
+      thumbnail?: string;
+    }> | undefined;
     const taskInfo = tasks?.[storyboardId];
-    if (!taskInfo?.taskId) return;
-    // 服务端已有尾帧则跳过
-    if (taskInfo.lastFrameUrl) return;
+    const taskId = taskInfo?.taskId;
+    if (!taskId) return;
 
+    if (_processedTaskIds.has(taskId) || _inflightTaskIds.has(taskId)) return;
+
+    const hasLastFrame = !!taskInfo.lastFrameUrl;
+    const isDirtyLastFrame =
+      !!taskInfo.lastFrameUrl &&
+      !!taskInfo.thumbnail &&
+      taskInfo.lastFrameUrl === taskInfo.thumbnail;
+
+    // 服务端已有真实尾帧则跳过（脏值 lastFrameUrl===thumbnail 不算）
+    if (hasLastFrame && !isDirtyLastFrame) {
+      _processedTaskIds.add(taskId);
+      return;
+    }
+
+    _inflightTaskIds.add(taskId);
+    inflightTaskId = taskId;
+
+    // 优先: 客户端 canvas 截帧（适用于 OSS URL，CORS 已配置）
     const dataUrl = await extractLastFrame(videoUrl);
-    if (!dataUrl) return;
+    if (dataUrl) {
+      await apiRequest(`/video-tasks/${taskId}/last-frame`, {
+        method: 'POST',
+        body: JSON.stringify({ lastFrameDataUrl: dataUrl }),
+        timeout: 30000, maxRetries: 1,
+      });
+      console.log(`[LastFrame] ✅ Client canvas uploaded last frame for ${storyboardId}`);
+      _processedTaskIds.add(taskId);
+      return;
+    }
 
-    await apiRequest(`/video-tasks/${taskInfo.taskId}/last-frame`, {
+    // 回退: canvas CORS 失败（Volcengine CDN）→ 请求服务端从 OSS 直接截帧
+    console.log(`[LastFrame] Canvas CORS fail, requesting server-side OSS extraction for ${storyboardId}`);
+    const fallbackResp = await apiRequest(`/video-tasks/${taskId}/extract-last-frame`, {
       method: 'POST',
-      body: JSON.stringify({ lastFrameDataUrl: dataUrl }),
-      timeout: 30000, maxRetries: 1,
+      body: JSON.stringify({ videoUrl }),
+      timeout: 20000, maxRetries: 0, silent: true,
     });
-    console.log(`[LastFrame] ✅ Client uploaded last frame for ${storyboardId}`);
+    if (fallbackResp?.success) {
+      _processedTaskIds.add(taskId);
+    }
   } catch {
     // non-blocking
+  } finally {
+    if (inflightTaskId) _inflightTaskIds.delete(inflightTaskId);
   }
 }

@@ -1,61 +1,37 @@
-**Add your own guidelines here**
-<!--
+# 项目 UI / 设计协作指南
 
-System Guidelines
+## 通用实现规则
 
-Use this file to provide the AI with rules and guidelines you want it to follow.
-This template outlines a few examples of things you can add. You can add your own sections and format it to suit your needs
+- 默认优先响应式布局，尽量使用 flex / grid，不要随意使用绝对定位
+- 保持暗色科幻 + 影视创作气质，避免把核心产品页面做成营销落地页
+- 首页与作品页都要有清晰的主操作，不要让多个按钮抢同一个视觉层级
+- 改动 UI 时优先复用现有组件与样式节奏，避免局部风格突然“串台”
 
-TIP: More context isn't always better. It can confuse the LLM. Try and add the most important rules you need
+## Pencil 协作规则
 
-# General guidelines
+- `src/app/constants/pencilUi.ts` 是首页与作品工作台的设计蓝图单一事实来源
+- 调整 Hero、区块标题、能力卡片、主操作文案时，优先修改蓝图，再让组件消费
+- 当 Pencil 编辑器连通后，`.pen` 文件应按蓝图中的 screen id 与区块层级组织
+- 如果代码与 Pencil 设计不一致，以蓝图文件为校准基准，而不是在多个组件里散改文案
 
-Any general rules you want the AI to follow.
-For example:
+## 关键页面结构
 
-* Only use absolute positioning when necessary. Opt for responsive and well structured layouts that use flexbox and grid by default
-* Refactor code as you go to keep code clean
-* Keep file sizes small and put helper functions and components in their own files.
+### 首页创作 (`home-creation`)
 
---------------
+- Hero 区：品牌承诺 + 创作入口价值主张
+- Composer 区：文本输入、参考图、快捷键提示、主 CTA
+- Templates 区：灵感模板
+- Recent 区：最近作品入口
+- Features 区：三张能力卡
 
-# Design system guidelines
-Rules for how the AI should make generations look like your company's design system
+### 作品工作台 (`series-workbench`)
 
-Additionally, if you select a design system to use in the prompt box, you can reference
-your design system's components, tokens, variables and components.
-For example:
+- Header 区：标题、副标题、主次操作按钮
+- Features 区：四张能力卡，解释产品能力边界
+- List 区：作品列表与编辑入口
 
-* Use a base font-size of 14px
-* Date formats should always be in the format “Jun 10”
-* The bottom toolbar should only ever have a maximum of 4 items
-* Never use the floating action button with the bottom toolbar
-* Chips should always come in sets of 3 or more
-* Don't use a dropdown if there are 2 or fewer options
+## 文案与交互建议
 
-You can also create sub sections and add more specific details
-For example:
-
-
-## Button
-The Button component is a fundamental interactive element in our design system, designed to trigger actions or navigate
-users through the application. It provides visual feedback and clear affordances to enhance user experience.
-
-### Usage
-Buttons should be used for important actions that users need to take, such as form submissions, confirming choices,
-or initiating processes. They communicate interactivity and should have clear, action-oriented labels.
-
-### Variants
-* Primary Button
-  * Purpose : Used for the main action in a section or page
-  * Visual Style : Bold, filled with the primary brand color
-  * Usage : One primary button per section to guide users toward the most important action
-* Secondary Button
-  * Purpose : Used for alternative or supporting actions
-  * Visual Style : Outlined with the primary color, transparent background
-  * Usage : Can appear alongside a primary button for less important actions
-* Tertiary Button
-  * Purpose : Used for the least important actions
-  * Visual Style : Text-only with no border, using primary color
-  * Usage : For actions that should be available but not emphasized
--->
+- 主按钮文案保持动词开头，简短直接
+- 高频操作（开始创作、新建作品、刷新）优先保留在用户首屏可见区域
+- 提示文案尽量说明“当前状态 + 下一步结果”，尤其是 AI 生成中、上传中、同步中

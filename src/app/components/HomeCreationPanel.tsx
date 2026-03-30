@@ -21,6 +21,7 @@ import { Button } from './ui';
 import { toast } from 'sonner';
 import * as seriesService from '../services';
 import type { Series, SeriesFormData, ProductionType } from '../types';
+import { HOME_CREATION_PENCIL_BLUEPRINT } from '../constants/pencilUi';
 import { RecentSeriesCard, FeatureCard, ReferenceImageInput, QUICK_TEMPLATES, STYLE_CHIPS, EPISODE_PRESETS, MAX_INPUT_LENGTH, PRODUCTION_TYPES } from './home';
 import { CreationProgressOverlay } from './home/CreationProgressOverlay';
 import { getErrorMessage, getAutoDefaults } from '../utils';
@@ -33,6 +34,12 @@ interface HomeCreationPanelProps {
   onEditSeries?: (series: Series) => void;
 }
 
+const HOME_FEATURE_ICON_MAP = {
+  'book-open': BookOpen,
+  palette: Palette,
+  play: Play,
+} as const;
+
 export function HomeCreationPanel({
   userPhone,
   onSeriesCreated,
@@ -40,6 +47,7 @@ export function HomeCreationPanel({
   recentSeries = [],
   onEditSeries,
 }: HomeCreationPanelProps) {
+  const blueprint = HOME_CREATION_PENCIL_BLUEPRINT;
   const [userInput, setUserInput] = useState('');
   const [selectedStyle, setSelectedStyle] = useState('realistic');
   const [selectedEpisodes, setSelectedEpisodes] = useState(3);
@@ -173,17 +181,17 @@ export function HomeCreationPanel({
           className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 mb-6"
         >
           <Zap className="w-3.5 h-3.5 text-purple-400" />
-          <span className="text-xs text-purple-300 font-medium">AI驱动 · 一键生成</span>
+          <span className="text-xs text-purple-300 font-medium">{blueprint.hero.badge}</span>
         </motion.div>
 
         <h1 className="text-3xl sm:text-5xl font-bold text-white mb-3 leading-tight">
-          用一句话
+            {blueprint.hero.titlePrefix}
           <span className="bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400 bg-clip-text text-transparent">
-            {' '}创作影视
+              {' '}{blueprint.hero.titleHighlight}
           </span>
         </h1>
         <p className="text-gray-400 text-sm sm:text-base max-w-lg mx-auto">
-          描述你想要的故事，AI将自动生成剧本、角色、分镜和视频
+            {blueprint.hero.description}
         </p>
       </motion.div>
 
@@ -205,7 +213,7 @@ export function HomeCreationPanel({
                   setUserInput(e.target.value);
                 }
               }}
-              placeholder="描述你想创作的内容... 故事、品牌介绍、产品亮点、广告创意，任何想法都可以"
+              placeholder={blueprint.composer.placeholder}
               rows={2}
               disabled={isCreating}
               className="w-full bg-transparent text-white placeholder:text-gray-500 text-base sm:text-lg resize-none focus:outline-none leading-relaxed pr-2"
@@ -232,8 +240,8 @@ export function HomeCreationPanel({
             <div className="flex items-center justify-between mt-1">
               <div className="flex items-center gap-1.5 text-[10px] text-gray-600">
                 <CornerDownLeft className="w-3 h-3" />
-                <span className="hidden sm:inline">Enter 发送 · Shift+Enter 换行</span>
-                <span className="sm:hidden">Enter 发送</span>
+                <span className="hidden sm:inline">{blueprint.composer.shortcutDesktop}</span>
+                <span className="sm:hidden">{blueprint.composer.shortcutMobile}</span>
               </div>
               <span className={`text-[10px] transition-colors ${
                 inputLength > MAX_INPUT_LENGTH * 0.9 ? 'text-orange-400' : 'text-gray-600'
@@ -270,12 +278,12 @@ export function HomeCreationPanel({
               {isCreating ? (
                 <span className="flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  创作中...
+                  {blueprint.composer.submitLoadingLabel}
                 </span>
               ) : (
                 <span className="flex items-center gap-2">
                   <Wand2 className="w-4 h-4" />
-                  开始创作
+                  {blueprint.composer.submitIdleLabel}
                 </span>
               )}
             </Button>
@@ -295,7 +303,7 @@ export function HomeCreationPanel({
                   <div>
                     <div className="flex items-center gap-2 mb-2">
                       <Film className="w-3.5 h-3.5 text-gray-400" />
-                      <span className="text-xs text-gray-400">作品类型</span>
+                      <span className="text-xs text-gray-400">{blueprint.composer.advancedLabels.productionType}</span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {PRODUCTION_TYPES.map((pt) => (
@@ -320,7 +328,7 @@ export function HomeCreationPanel({
                   <div>
                     <div className="flex items-center gap-2 mb-2">
                       <Palette className="w-3.5 h-3.5 text-gray-400" />
-                      <span className="text-xs text-gray-400">视觉风格</span>
+                      <span className="text-xs text-gray-400">{blueprint.composer.advancedLabels.visualStyle}</span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {STYLE_CHIPS.map((style) => (
@@ -345,7 +353,7 @@ export function HomeCreationPanel({
                   <div>
                     <div className="flex items-center gap-2 mb-2">
                       <Film className="w-3.5 h-3.5 text-gray-400" />
-                      <span className="text-xs text-gray-400">集数设置</span>
+                      <span className="text-xs text-gray-400">{blueprint.composer.advancedLabels.episodeCount}</span>
                     </div>
                     <div className="flex gap-2">
                       {EPISODE_PRESETS.map((preset) => (
@@ -379,7 +387,7 @@ export function HomeCreationPanel({
       >
         <div className="flex items-center gap-2 mb-3">
           <Sparkles className="w-4 h-4 text-purple-400" />
-          <h3 className="text-sm font-medium text-gray-400">灵感模板 · 点击快速填充</h3>
+          <h3 className="text-sm font-medium text-gray-400">{blueprint.sections.templatesTitle}</h3>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
           {QUICK_TEMPLATES.map((template, index) => (
@@ -414,14 +422,14 @@ export function HomeCreationPanel({
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-gray-400" />
-              <h3 className="text-sm font-medium text-gray-400">最近创作</h3>
+              <h3 className="text-sm font-medium text-gray-400">{blueprint.sections.recentTitle}</h3>
             </div>
             {onEditSeries && (
               <button
                 onClick={() => onEditSeries(recentSeries[0])}
                 className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1 transition-colors"
               >
-                查看全部 <ArrowRight className="w-3 h-3" />
+                {blueprint.sections.recentActionLabel} <ArrowRight className="w-3 h-3" />
               </button>
             )}
           </div>
@@ -440,27 +448,19 @@ export function HomeCreationPanel({
         transition={{ delay: 0.5, duration: 0.5 }}
         className="grid grid-cols-1 sm:grid-cols-3 gap-3 pb-8"
       >
-        <FeatureCard
-          icon={<BookOpen className="w-5 h-5" />}
-          title="AI剧本创作"
-          desc="自动生成角色、分集剧情、分镜脚本"
-          color="text-blue-400"
-          bg="from-blue-500/10 to-cyan-500/10"
-        />
-        <FeatureCard
-          icon={<Palette className="w-5 h-5" />}
-          title="多样视觉风格"
-          desc="日漫、写实、赛博朋克等多种风格"
-          color="text-purple-400"
-          bg="from-purple-500/10 to-pink-500/10"
-        />
-        <FeatureCard
-          icon={<Play className="w-5 h-5" />}
-          title="自动视频生成"
-          desc="AI将分镜自动转化为连续视频"
-          color="text-pink-400"
-          bg="from-pink-500/10 to-orange-500/10"
-        />
+        {blueprint.features.map((feature) => {
+          const Icon = HOME_FEATURE_ICON_MAP[feature.icon];
+          return (
+            <FeatureCard
+              key={feature.id}
+              icon={<Icon className="w-5 h-5" />}
+              title={feature.title}
+              desc={feature.desc}
+              color={feature.colorClass}
+              bg={feature.bgClass}
+            />
+          );
+        })}
       </motion.div>
 
       {/* === 创作进度覆盖层 === */}

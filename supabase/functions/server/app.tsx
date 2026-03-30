@@ -2711,10 +2711,16 @@ app.post(`${PREFIX}/video-tasks/:taskId/last-frame`, async (c) => {
     }
     // 检查任务是否已有尾帧（存储在generation_metadata.lastFrameUrl中）
     const { data: task } = await supabase.from('video_tasks')
-      .select('task_id, generation_metadata').eq('task_id', taskId).maybeSingle();
+      .select('task_id, generation_metadata, thumbnail').eq('task_id', taskId).maybeSingle();
     const existingMeta = (task?.generation_metadata as Record<string, unknown>) || {};
-    if (existingMeta.lastFrameUrl) {
-      return c.json({ success: true, message: 'Last frame already exists', lastFrameUrl: existingMeta.lastFrameUrl });
+    const existingLastFrameUrl = typeof existingMeta.lastFrameUrl === 'string' ? existingMeta.lastFrameUrl : '';
+    const taskThumbnail = typeof task?.thumbnail === 'string' ? task.thumbnail : '';
+    const isDirtyLastFrame = !!existingLastFrameUrl && !!taskThumbnail && existingLastFrameUrl === taskThumbnail;
+    if (existingLastFrameUrl && !isDirtyLastFrame) {
+      return c.json({ success: true, message: 'Last frame already exists', lastFrameUrl: existingLastFrameUrl });
+    }
+    if (isDirtyLastFrame) {
+      console.warn(`[LastFrame] ⚠️ Dirty lastFrameUrl detected (=thumbnail), will overwrite with true last frame: ${taskId}`);
     }
     // 解码 base64 并上传到 OSS
     const base64Data = lastFrameDataUrl.split(',')[1];
@@ -2751,6 +2757,101 @@ app.post(`${PREFIX}/video-tasks/:taskId/last-frame`, async (c) => {
 });
 
 // v6.0.169: 创建单个分镜
+  // v6.0.202: 服务端触发尾帧提取——当客户端 canvas CORS 失败时的回退
+  // 策略: OSS 视频快照(优先) > 强制传到 OSS 后再截帧 > 跳过
+  app.post(`${PREFIX}/video-tasks/:taskId/extract-last-frame`, async (c) => {
+    try {
+      const taskId = c.req.param('taskId');
+      const body = await c.req.json().catch(() => ({}));
+      const hintVideoUrl = body.videoUrl as string | undefined;
+
+      // 查任务
+      const { data: task } = await supabase.from('video_tasks')
+        .select('task_id, video_url, duration, generation_metadata, thumbnail').eq('task_id', taskId).maybeSingle();
+      if (!task) return c.json({ success: false, error: 'Task not found' }, 404);
+
+      const existingMeta = parseMeta(task.generation_metadata) || {};
+      // 已有真实尾帧则跳过（避免重复工作）
+      const existingLastFrameUrl = typeof existingMeta.lastFrameUrl === 'string' ? existingMeta.lastFrameUrl : '';
+      const taskThumbnail = typeof task.thumbnail === 'string' ? task.thumbnail : '';
+      const isDirtyLastFrame = !!existingLastFrameUrl && !!taskThumbnail && existingLastFrameUrl === taskThumbnail;
+      if (existingLastFrameUrl.startsWith('http') && !isDirtyLastFrame) {
+        return c.json({ success: true, lastFrameUrl: existingLastFrameUrl, cached: true });
+      }
+      if (isDirtyLastFrame) {
+        console.warn(`[ExtractLastFrame] ⚠️ Dirty cached lastFrameUrl (=thumbnail), will re-extract: ${taskId}`);
+      }
+
+      let videoUrl = (task.video_url || hintVideoUrl || '') as string;
+      if (!videoUrl.startsWith('http')) return c.json({ success: false, error: '无视频URL' }, 400);
+
+      const durationSec = parseInt(String(existingMeta.duration || task.duration)) || 10;
+      const snapshotMs = Math.max(0, (durationSec * 1000) - 500);
+
+      let lastFrameUrl = '';
+
+      // 策略1: 已在 OSS → 直接快照
+      if (isOSSConfigured() && videoUrl.includes('.aliyuncs.com')) {
+        try {
+          const urlObj = new URL(videoUrl);
+          const objectKey = urlObj.pathname.startsWith('/') ? urlObj.pathname.slice(1) : urlObj.pathname;
+          const snapshotUrl = await generateVideoSnapshotUrl(objectKey, snapshotMs, 3600);
+          const snapResp = await fetchWithTimeout(snapshotUrl, {}, 8000);
+          if (snapResp.ok) {
+            const snapBuf = await snapResp.arrayBuffer();
+            if (snapBuf.byteLength > 1000) {
+              lastFrameUrl = await uploadToOSS(`last-frames/${taskId}.jpg`, snapBuf, 'image/jpeg');
+              console.log(`[ExtractLastFrame] ✅ OSS snapshot OK for ${taskId}: ${lastFrameUrl.substring(0, 60)}`);
+            } else {
+              console.warn(`[ExtractLastFrame] ⚠️ OSS snapshot too small (${snapBuf.byteLength}B) — IMM not enabled`);
+            }
+          } else {
+            console.warn(`[ExtractLastFrame] ⚠️ OSS snapshot HTTP ${snapResp.status} — IMM not enabled`);
+          }
+        } catch (e: unknown) {
+          console.warn(`[ExtractLastFrame] Strategy1 error: ${getErrorMessage(e)}`);
+        }
+      }
+
+      // 策略2: 不在 OSS → 先转存再截帧（10s timeout）
+      if (!lastFrameUrl && isOSSConfigured() && !videoUrl.includes('.aliyuncs.com')) {
+        try {
+          const ossKey = `videos/${taskId}.mp4`;
+          const ossTransfer = await transferFileToOSS(videoUrl, ossKey, 'video/mp4');
+          if (ossTransfer.transferred && ossTransfer.url) {
+            videoUrl = ossTransfer.url;
+            // 更新 task video_url
+            await supabase.from('video_tasks').update({ video_url: videoUrl }).eq('task_id', taskId);
+            const urlObj2 = new URL(videoUrl);
+            const objectKey2 = urlObj2.pathname.startsWith('/') ? urlObj2.pathname.slice(1) : urlObj2.pathname;
+            const snapshotUrl2 = await generateVideoSnapshotUrl(objectKey2, snapshotMs, 3600);
+            const snapResp2 = await fetchWithTimeout(snapshotUrl2, {}, 8000);
+            if (snapResp2.ok) {
+              const snapBuf2 = await snapResp2.arrayBuffer();
+              if (snapBuf2.byteLength > 1000) {
+                lastFrameUrl = await uploadToOSS(`last-frames/${taskId}.jpg`, snapBuf2, 'image/jpeg');
+                console.log(`[ExtractLastFrame] ✅ OSS transfer+snapshot OK for ${taskId}`);
+              }
+            }
+          }
+        } catch (e: unknown) {
+          console.warn(`[ExtractLastFrame] Strategy2 error: ${getErrorMessage(e)}`);
+        }
+      }
+
+      if (lastFrameUrl) {
+        await supabase.from('video_tasks').update({
+          generation_metadata: { ...existingMeta, lastFrameUrl },
+        }).eq('task_id', taskId);
+        return c.json({ success: true, lastFrameUrl });
+      }
+      return c.json({ success: false, error: 'OSS IMM未开通，无法服务端截帧' });
+    } catch (error: unknown) {
+      console.error('[POST /video-tasks/:taskId/extract-last-frame] Error:', getErrorMessage(error));
+      return c.json({ success: false, error: getErrorMessage(error) }, 500);
+    }
+  });
+
 app.post(`${PREFIX}/series/:seriesId/storyboards`, async (c) => {
   try {
     const seriesId = c.req.param('seriesId');
@@ -4228,10 +4329,10 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
       try {
         const sceneNum = parseInt(storyboardNumber);
         if (sceneNum > 1) {
-          // v6.0.200: 三级回退策略获取前一场景尾帧图片：
+          // v6.0.206: 严格尾帧策略（禁止首帧回退）
           // 1. DB中已保存的 last_frame_url（最可靠——OSS截帧或客户端上传的永久文件）
           // 2. 实时 OSS 视频截帧（需要 IMM 服务）
-          // 3. 回退到 thumbnail（首帧——有总比没有好）
+          // 禁止：thumbnail / storyboard.image_url（这两者常为首帧，会导致下一镜头开头重复）
           const { data: prevVideoTasks } = await supabase
             .from('video_tasks')
             .select('task_id, thumbnail, video_url, duration, generation_metadata')
@@ -4260,14 +4361,20 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
           const prevMeta = parseMeta(prevTask?.generation_metadata);
           const savedLastFrameUrl = prevMeta?.lastFrameUrl as string | undefined;
           if (savedLastFrameUrl && typeof savedLastFrameUrl === 'string' && savedLastFrameUrl.startsWith('http')) {
-            // v6.0.201: 对参考图放宽尺寸验证——100px即可（原300px过严）
-            if (await validateImageDimensions(savedLastFrameUrl, 100)) {
-              finalImages.push(savedLastFrameUrl);
-              prevSceneImageInjected = true;
-              refInjected = true;
-              console.log(`[Volcengine] 🎯 Strategy1 OK: prev scene ${sceneNum - 1} SAVED LAST FRAME as i2v ref`);
+            const prevThumb = typeof prevTask?.thumbnail === 'string' ? prevTask.thumbnail : '';
+            const isDirtyLastFrame = !!prevThumb && savedLastFrameUrl === prevThumb;
+            if (isDirtyLastFrame) {
+              console.warn(`[Volcengine] ⚠️ Strategy1 SKIP: dirty lastFrameUrl equals thumbnail (scene ${sceneNum - 1})`);
             } else {
-              console.warn(`[Volcengine] ⚠️ Strategy1 FAIL: savedLastFrameUrl dimensions too small or unreachable`);
+              // v6.0.201: 对参考图放宽尺寸验证——100px即可（原300px过严）
+              if (await validateImageDimensions(savedLastFrameUrl, 100)) {
+                finalImages.push(savedLastFrameUrl);
+                prevSceneImageInjected = true;
+                refInjected = true;
+                console.log(`[Volcengine] 🎯 Strategy1 OK: prev scene ${sceneNum - 1} SAVED LAST FRAME as i2v ref`);
+              } else {
+                console.warn(`[Volcengine] ⚠️ Strategy1 FAIL: savedLastFrameUrl dimensions too small or unreachable`);
+              }
             }
           }
           // 策略2: 实时 OSS 视频截帧
@@ -4309,35 +4416,10 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
           } else if (!refInjected && prevTask?.video_url) {
             console.warn(`[Volcengine] ⚠️ Strategy2 SKIP: video not on OSS (url=${prevTask.video_url.substring(0, 50)})`);
           }
-          // 策略3: 回退到thumbnail（首帧）
-          if (!refInjected && prevTask?.thumbnail) {
-            const refImageUrl = prevTask.thumbnail;
-            if (typeof refImageUrl === 'string' && refImageUrl.startsWith('http')) {
-              // v6.0.201: 对参考图完全跳过尺寸验证——有图总比没图好
-              finalImages.push(refImageUrl);
-              prevSceneImageInjected = true;
-              refInjected = true;
-              console.log(`[Volcengine] 🖼️ Strategy3 OK: prev scene ${sceneNum - 1} thumbnail as i2v ref: ${refImageUrl.substring(0, 60)}`);
-            }
-          }
-          // 策略4: 从series_storyboards.image_url获取（thumbnail同步到了这里）
-          if (!refInjected) {
-            try {
-              const { data: prevSb } = await supabase.from('series_storyboards')
-                .select('image_url, video_url')
-                .eq('series_id', seriesId).eq('episode_number', episodeNumber).eq('scene_number', sceneNum - 1)
-                .maybeSingle();
-              const sbImageUrl = prevSb?.image_url;
-              if (sbImageUrl && typeof sbImageUrl === 'string' && sbImageUrl.startsWith('http')) {
-                finalImages.push(sbImageUrl);
-                prevSceneImageInjected = true;
-                refInjected = true;
-                console.log(`[Volcengine] 🖼️ Strategy4 OK: prev scene ${sceneNum - 1} storyboard.image_url as i2v ref: ${sbImageUrl.substring(0, 60)}`);
-              }
-            } catch { /* non-blocking */ }
-          }
+          // v6.0.206: 移除 Strategy3/4（thumbnail 与 storyboard.image_url 回退）
+          // 原因：这两条链路高概率是首帧，会把下一镜头首帧“钉死”为上一镜头首帧，造成你看到的一模一样开头。
           if (!prevSceneImageInjected) {
-            console.warn(`[Volcengine] ❌ ALL 4 strategies failed for prev scene ${sceneNum - 1} — pure t2v mode (no visual continuity)`);
+            console.warn(`[Volcengine] ❌ Tail-frame strategies failed for prev scene ${sceneNum - 1} — pure t2v mode (no forced first-frame clone)`);
           }
         } else if (sceneNum === 1 && episodeNumber > 1) {
           // v6.0.200: 跨集衔接——提取上一集最后场景视频的尾帧
@@ -4372,11 +4454,17 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
           // 策略0: DB中已保存的尾帧（在generation_metadata.lastFrameUrl中）
           const prevEpMeta = parseMeta(prevEpLastTask?.generation_metadata);
           const prevEpLastFrameUrl = prevEpMeta?.lastFrameUrl as string | undefined;
-          if (prevEpLastFrameUrl?.startsWith('http') && await validateImageDimensions(prevEpLastFrameUrl, 100)) {
-            finalImages.push(prevEpLastFrameUrl);
-            prevSceneImageInjected = true;
-            crossEpLastFrameOk = true;
-            console.log(`[Volcengine] 🎯 Cross-ep: ep${episodeNumber - 1} scene${maxScn} SAVED LAST FRAME as i2v ref`);
+          if (prevEpLastFrameUrl?.startsWith('http')) {
+            const prevEpThumb = typeof prevEpLastTask?.thumbnail === 'string' ? prevEpLastTask.thumbnail : '';
+            const isDirtyCrossEpLastFrame = !!prevEpThumb && prevEpLastFrameUrl === prevEpThumb;
+            if (isDirtyCrossEpLastFrame) {
+              console.warn(`[Volcengine] ⚠️ Cross-ep strategy0 SKIP: dirty lastFrameUrl equals thumbnail (ep${episodeNumber - 1} scene${maxScn})`);
+            } else if (await validateImageDimensions(prevEpLastFrameUrl, 100)) {
+              finalImages.push(prevEpLastFrameUrl);
+              prevSceneImageInjected = true;
+              crossEpLastFrameOk = true;
+              console.log(`[Volcengine] 🎯 Cross-ep: ep${episodeNumber - 1} scene${maxScn} SAVED LAST FRAME as i2v ref`);
+            }
           }
           // 策略1: OSS视频截帧——提取上一集最后场景的尾帧
           if (!crossEpLastFrameOk && prevEpLastTask?.video_url?.includes('.aliyuncs.com') && isOSSConfigured()) {
@@ -4397,19 +4485,13 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
               console.warn(`[Volcengine] ⚠️ Cross-ep snapshot failed: ${getErrorMessage(snapErr)}`);
             }
           }
-          // 策略2: 回退到thumbnail
-          if (!crossEpLastFrameOk && prevEpLastTask?.thumbnail) {
-            const prevEpImageUrl = prevEpLastTask.thumbnail;
-            if (typeof prevEpImageUrl === 'string' && prevEpImageUrl.startsWith('http')) {
-              finalImages.push(prevEpImageUrl);
-              prevSceneImageInjected = true;
-              console.log(`[Volcengine] 🖼️ Cross-ep fallback: ep${episodeNumber - 1} thumbnail as i2v ref`);
-            }
-          }
+          // v6.0.206: 移除跨集thumbnail回退，避免把上一集首帧当尾帧
         }
 
+        // v6.0.206: sceneNum>1 时禁用 style-anchor 回退，避免“首帧模板化克隆”
+        const allowStyleAnchorFallback = Number(storyboardNumber || 0) <= 1;
         // v6.0.196: 风格锚定图——优先用系列首个已完成视频缩略图，回退到styleAnchorImageUrl
-        if (finalImages.length === 0) {
+        if (finalImages.length === 0 && allowStyleAnchorFallback) {
           let anchorImageUrl = '';
           const { data: firstCompletedTask } = await supabase
             .from('video_tasks')
@@ -5161,7 +5243,7 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
                 const lfTimeout = new Promise<boolean>(r => setTimeout(() => r(false), 10000));
                 const lfResult = await Promise.race([lastFrameTask, lfTimeout]);
                 if (!lfResult) {
-                  console.warn(`[OSS] ⚠️ Last frame extraction did not succeed for ${localId} — next scene will use thumbnail fallback`);
+                  console.warn(`[OSS] ⚠️ Last frame extraction did not succeed for ${localId} — next scene will proceed without forced prev-frame reference`);
                 }
               } catch { /* non-blocking */ }
             }
@@ -5179,24 +5261,6 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
           ossPending = true;
           console.warn(`[OSS] Transfer error for ${localId}: ${getErrorMessage(ossErr)}`);
         }
-      }
-
-      // v6.0.201: 如果尾帧提取失败（IMM未开通），将thumbnail作为lastFrameUrl的最低保底
-      // 这确保下一场景至少能拿到前序场景的FIRST frame作为i2v参考
-      if (dbTask.generation_metadata?.type === 'storyboard_video' && rawThumbnailUrl) {
-        try {
-          const { data: checkTask } = await supabase.from('video_tasks')
-            .select('generation_metadata').eq('task_id', localId).maybeSingle();
-          const checkMeta = parseMeta(checkTask?.generation_metadata);
-          if (!checkMeta?.lastFrameUrl) {
-            const thumbUrl = rawThumbnailUrl;
-            if (thumbUrl.startsWith('http')) {
-              const updMeta = { ...(checkMeta || {}), lastFrameUrl: thumbUrl };
-              await supabase.from('video_tasks').update({ generation_metadata: updMeta }).eq('task_id', localId);
-              console.log(`[OSS] 🖼️ Thumbnail saved as fallback lastFrameUrl for ${localId} (IMM not available)`);
-            }
-          }
-        } catch { /* non-blocking */ }
       }
 
       // Step 4: 返回（可能是OSS URL或原始Volcengine URL）

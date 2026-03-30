@@ -57,10 +57,11 @@ export function SeriesEditor({ series, userPhone, onBack, onUpdate }: SeriesEdit
     localSeries, userPhone, setLocalSeries, onUpdate, confirmAction
   );
 
-  // 同步props的series到localSeries
+  // 只在切换到不同作品（seriesId 变化）时才重置 localSeries，
+  // 避免父组件因引用变化（或轮询回调）将本地编辑内容覆盖掉。
   useEffect(() => {
     setLocalSeries(series);
-  }, [series]);
+  }, [series.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // v6.0.146: 打开编辑器时检测——如果status='failed'或'generating'但实际已完成，自动修正
   useEffect(() => {
@@ -98,7 +99,7 @@ export function SeriesEditor({ series, userPhone, onBack, onUpdate }: SeriesEdit
     try {
       const result = await seriesService.updateSeries(localSeries.id, localSeries);
       if (result.success && result.data) {
-        onUpdate(result.data);
+        onUpdate(result.data as unknown as Series);
       } else {
         toast.error('保存失败：' + getErrorMessage(result.error));
       }
@@ -166,29 +167,14 @@ export function SeriesEditor({ series, userPhone, onBack, onUpdate }: SeriesEdit
     setLocalSeries(updated);
   };
 
-  const handleEpisodeSelect = async (episode: Episode) => {
-    try {
-      const result = await seriesService.getSeries(localSeries.id);
-      if (result.success && result.data) {
-        const freshSeries = result.data;
-        const freshEpisode = freshSeries.episodes?.find(ep => ep.id === episode.id);
-        if (freshEpisode) {
-          setLocalSeries(freshSeries);
-          onUpdate(freshSeries);
-          setSelectedEpisode(freshEpisode);
-          setCurrentView('storyboards');
-        } else {
-          setSelectedEpisode(episode);
-          setCurrentView('storyboards');
-        }
-      } else {
-        setSelectedEpisode(episode);
-        setCurrentView('storyboards');
-      }
-    } catch {
-      setSelectedEpisode(episode);
-      setCurrentView('storyboards');
-    }
+  const handleEpisodeSelect = (episode: Episode) => {
+    // Prefer local episode data — it contains the user's latest edits (description,
+    // dialogue, cameraAngle, duration, etc. already persisted via PATCH, but may not
+    // have been committed to DB yet). useStoryboardPolling inside StoryboardEditor
+    // handles refreshing video URLs / status from the server.
+    const localEpisode = localSeries.episodes?.find(ep => ep.id === episode.id) ?? episode;
+    setSelectedEpisode(localEpisode);
+    setCurrentView('storyboards');
   };
 
   const handleEpisodeUpdate = (episodes: Episode[]) => {
@@ -304,8 +290,8 @@ export function SeriesEditor({ series, userPhone, onBack, onUpdate }: SeriesEdit
 
                   const refreshed = await seriesService.getSeries(localSeries.id);
                   if (refreshed.success && refreshed.data) {
-                    setLocalSeries(refreshed.data);
-                    onUpdate(refreshed.data);
+                    setLocalSeries(refreshed.data as unknown as Series);
+                    onUpdate(refreshed.data as unknown as Series);
                   }
 
                   toast.success(msg || '同步完成');
@@ -463,8 +449,8 @@ export function SeriesEditor({ series, userPhone, onBack, onUpdate }: SeriesEdit
               onRefresh={() => {
                 seriesService.getSeries(localSeries.id).then(result => {
                   if (result.success && result.data) {
-                    setLocalSeries(result.data);
-                    onUpdate(result.data);
+                    setLocalSeries(result.data as unknown as Series);
+                    onUpdate(result.data as unknown as Series);
                   }
                 });
               }}

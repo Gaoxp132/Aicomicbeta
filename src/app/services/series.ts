@@ -204,7 +204,7 @@ export async function generateFullAI(
 
 export async function updateSeries(
   seriesId: string,
-  updates: Partial<Series> & Record<string, unknown>
+  updates: Partial<Series> | Record<string, unknown>
 ): Promise<ApiResult> {
   return apiRequest(`/series/${seriesId}`, {
     method: 'PUT',

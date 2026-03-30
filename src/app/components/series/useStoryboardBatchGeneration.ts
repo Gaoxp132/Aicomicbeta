@@ -198,12 +198,12 @@ export function useStoryboardBatchGeneration({
           }),
         });
 
-        // v6.0.201: 等待尾帧提取完成（最多10s），确保下一场景能获���到参考图
+        // v6.0.206: 等待尾帧提取完成（最多20s），降低下一场景抢跑导致无尾帧参考的概率
         // 不再fire-and-forget，因为串行生成依赖前序场景的尾帧
         try {
           await Promise.race([
             extractAndUploadLastFrame(videoUrl, seriesId, sb.id),
-            new Promise(resolve => setTimeout(resolve, 10000)), // 10s timeout
+            new Promise(resolve => setTimeout(resolve, 20000)), // 20s timeout
           ]);
         } catch { /* non-blocking */ }
 

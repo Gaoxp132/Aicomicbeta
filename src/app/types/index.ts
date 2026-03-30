@@ -214,6 +214,8 @@ export interface Series {
   isLongSeries?: boolean;
   // v6.0.70: 是否发布到社区（默认true，存储在coherence_check.isPublic）
   isPublic?: boolean;
+  // v6.0.36: 作品类型（顶层字段，后端直接返回）
+  productionType?: ProductionType;
 }
 
 // 章节（用于长剧组织，每章包含多集）
