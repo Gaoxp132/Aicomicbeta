@@ -28,6 +28,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+     "build": "vite build",
+     "auto-sync": "node scripts/auto-sync.mjs",
+     "auto-sync:once": "node scripts/auto-sync.mjs --once --dry-run"
   }
 }
