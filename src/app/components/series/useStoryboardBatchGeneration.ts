@@ -198,13 +198,32 @@ export function useStoryboardBatchGeneration({
           }),
         });
 
-        // v6.0.206: 等待尾帧提取完成（最多20s），降低下一场景抢跑导致无尾帧参考的概率
-        // 不再fire-and-forget，因为串行生成依赖前序场景的尾帧
+        // v6.0.214: 等待尾帧提取完成 + 验证尾帧确实已保存
+        // 串行生成依赖前序场景的尾帧，必须确认可用后才继续下一场景
         try {
           await Promise.race([
             extractAndUploadLastFrame(videoUrl, seriesId, sb.id),
-            new Promise(resolve => setTimeout(resolve, 20000)), // 20s timeout
+            new Promise(resolve => setTimeout(resolve, 20000)),
           ]);
+          // 验证尾帧是否就绪（服务端完成处理器可能需要额外时间）
+          if (idx < pending.length - 1) {
+            let lastFrameReady = false;
+            for (let lfCheck = 0; lfCheck < 6 && !lastFrameReady; lfCheck++) {
+              try {
+                const statusResp = await apiRequest(`/series/${seriesId}/video-task-status`, {
+                  method: 'GET', timeout: 8000, maxRetries: 0, silent: true,
+                });
+                const sTasks = statusResp?.storyboardTasks as Record<string, { lastFrameUrl?: string; thumbnail?: string }> | undefined;
+                const sInfo = sTasks?.[sb.id];
+                if (sInfo?.lastFrameUrl && sInfo.lastFrameUrl !== sInfo.thumbnail && sInfo.lastFrameUrl.includes('.aliyuncs.com')) {
+                  lastFrameReady = true;
+                  console.log(`[StoryboardEditor] ✅ Last frame verified for scene ${sb.sceneNumber}`);
+                }
+              } catch { /* ignore */ }
+              if (!lastFrameReady) await new Promise(r => setTimeout(r, 5000));
+            }
+            if (!lastFrameReady) console.warn(`[StoryboardEditor] ⚠️ Last frame NOT ready for scene ${sb.sceneNumber} after 30s — next scene will use pure t2v`);
+          }
         } catch { /* non-blocking */ }
 
         completed++;

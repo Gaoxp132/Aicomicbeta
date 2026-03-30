@@ -2750,6 +2750,97 @@ app.post(`${PREFIX}/video-tasks/:taskId/last-frame`, async (c) => {
   }
 });
 
+// v6.0.214: 服务端视频尾帧提取——客户端canvas CORS失败时的回退
+// 优先使用OSS IMM截帧，如果视频还不在OSS则先下载转存
+app.post(`${PREFIX}/video-tasks/:taskId/extract-last-frame`, async (c) => {
+  try {
+    const taskId = c.req.param('taskId');
+    const { data: task } = await supabase.from('video_tasks')
+      .select('task_id, video_url, duration, generation_metadata, volcengine_task_id')
+      .eq('task_id', taskId).maybeSingle();
+    if (!task || !task.video_url) return c.json({ success: false, error: 'Task not found or no video' }, 404);
+    const meta = (task.generation_metadata as Record<string, unknown>) || {};
+    // 如果已有有效 lastFrameUrl 则直接返回
+    if (meta.lastFrameUrl && String(meta.lastFrameUrl).includes('.aliyuncs.com')) {
+      return c.json({ success: true, lastFrameUrl: meta.lastFrameUrl, source: 'existing' });
+    }
+
+    let videoUrl = task.video_url;
+    // Step 1: 确保视频在OSS上
+    if (!videoUrl.includes('.aliyuncs.com') && isOSSConfigured()) {
+      try {
+        const result = await transferFileToOSS(videoUrl, `videos/${taskId}.mp4`, 'video/mp4', makeVolcRefreshFn(task.volcengine_task_id));
+        if (result.transferred) {
+          videoUrl = result.url;
+          await supabase.from('video_tasks').update({ video_url: videoUrl }).eq('task_id', taskId);
+          console.log(`[ExtractLastFrame] OSS transfer done: ${videoUrl.substring(0, 60)}...`);
+        }
+      } catch (e: unknown) { console.warn(`[ExtractLastFrame] OSS transfer failed: ${getErrorMessage(e)}`); }
+    }
+
+    // Step 2: OSS IMM 截帧
+    if (videoUrl.includes('.aliyuncs.com') && isOSSConfigured()) {
+      try {
+        const durSec = parseInt(String(task.duration)) || 10;
+        const snapMs = Math.max(0, (durSec * 1000) - 500);
+        const urlObj = new URL(videoUrl);
+        const objectKey = urlObj.pathname.startsWith('/') ? urlObj.pathname.slice(1) : urlObj.pathname;
+        const snapUrl = await generateVideoSnapshotUrl(objectKey, snapMs, 3600);
+        const snapResp = await fetchWithTimeout(snapUrl, {}, 8000);
+        if (snapResp.ok) {
+          const buf = await snapResp.arrayBuffer();
+          if (buf.byteLength > 1000) {
+            const lfUrl = await uploadToOSS(`last-frames/${taskId}.jpg`, buf, 'image/jpeg');
+            if (lfUrl) {
+              await supabase.from('video_tasks').update({
+                generation_metadata: { ...meta, lastFrameUrl: lfUrl },
+              }).eq('task_id', taskId);
+              console.log(`[ExtractLastFrame] ✅ OSS snapshot saved: ${lfUrl.substring(0, 60)}...`);
+              return c.json({ success: true, lastFrameUrl: lfUrl, source: 'oss-snapshot' });
+            }
+          }
+        }
+      } catch (e: unknown) { console.warn(`[ExtractLastFrame] OSS snapshot failed: ${getErrorMessage(e)}`); }
+    }
+
+    // Step 3: 如果截帧失败，尝试从Volcengine API获取last_frame_url
+    if (task.volcengine_task_id && VOLCENGINE_API_KEY) {
+      try {
+        const resp = await fetchWithTimeout(`${VOLCENGINE_BASE_URL}/${task.volcengine_task_id}`, {
+          method: 'GET', headers: { 'Authorization': `Bearer ${VOLCENGINE_API_KEY}`, 'Content-Type': 'application/json' },
+        }, 10000);
+        if (resp.ok) {
+          const data = await resp.json();
+          const lfUrl = data.content?.last_frame_url || '';
+          if (lfUrl && lfUrl.startsWith('http')) {
+            let finalUrl = lfUrl;
+            if (isOSSConfigured()) {
+              const dlResp = await fetchWithTimeout(lfUrl, {}, 8000);
+              if (dlResp.ok) {
+                const buf = await dlResp.arrayBuffer();
+                if (buf.byteLength > 500) {
+                  const ossUrl = await uploadToOSS(`last-frames/${taskId}.jpg`, buf, 'image/jpeg');
+                  if (ossUrl) finalUrl = ossUrl;
+                }
+              }
+            }
+            await supabase.from('video_tasks').update({
+              generation_metadata: { ...meta, lastFrameUrl: finalUrl },
+            }).eq('task_id', taskId);
+            console.log(`[ExtractLastFrame] ✅ Volcengine API last_frame: ${finalUrl.substring(0, 60)}...`);
+            return c.json({ success: true, lastFrameUrl: finalUrl, source: 'volcengine-api' });
+          }
+        }
+      } catch { /* non-blocking */ }
+    }
+
+    return c.json({ success: false, error: 'All extraction methods failed (IMM not enabled? Try enabling: 阿里云控制台 → OSS → 数据处理 → 智能媒体管理)' }, 500);
+  } catch (error: unknown) {
+    console.error('[POST /extract-last-frame] Error:', getErrorMessage(error));
+    return c.json({ success: false, error: getErrorMessage(error) }, 500);
+  }
+});
+
 // v6.0.169: 创建单个分镜
 app.post(`${PREFIX}/series/:seriesId/storyboards`, async (c) => {
   try {
@@ -5121,8 +5212,13 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
       // 官方文档: 任务完成后content.last_frame_url包含尾帧图片URL
       // 这是获取尾帧最可靠的方式，优先于OSS截帧和客户端canvas提取
       rawLastFrameUrl = apiData.content?.last_frame_url || '';
+      // v6.0.214: 诊断日志——记录Volcengine API返回的content完整字段列表
+      const _contentKeys = apiData.content ? Object.keys(apiData.content) : [];
+      console.log(`[Volcengine] 📋 API content keys: [${_contentKeys.join(', ')}], last_frame_url=${rawLastFrameUrl ? 'YES(' + rawLastFrameUrl.substring(0, 50) + ')' : 'EMPTY'}`);
       if (rawLastFrameUrl) {
         console.log(`[Volcengine] 🎯 API returned last_frame_url: ${rawLastFrameUrl.substring(0, 80)}...`);
+      } else {
+        console.warn(`[Volcengine] ⚠️ API did NOT return content.last_frame_url — return_last_frame may not be supported or task was created without it`);
       }
     }
 
