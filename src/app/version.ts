@@ -122,6 +122,6 @@
  * (earlier versions omitted for brevity — see git history)
  */
 
-export const APP_VERSION = '6.0.211';
+export const APP_VERSION = '6.0.213';
 export const VERSION_DATE = '2026-03-30';
-export const VERSION_DESCRIPTION = 'Volcengine尾帧URL永久化——API返回的24h临时URL立即转存OSS';
+export const VERSION_DESCRIPTION = '尾帧终极修复——Strategy3重查Volcengine API + early-return后台补填lastFrameUrl';

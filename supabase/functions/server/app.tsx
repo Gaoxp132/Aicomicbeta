@@ -4234,7 +4234,7 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
           // 3. 回退到 thumbnail（首帧——有总比没有好）
           const { data: prevVideoTasks } = await supabase
             .from('video_tasks')
-            .select('task_id, thumbnail, video_url, duration, generation_metadata')
+            .select('task_id, volcengine_task_id, thumbnail, video_url, duration, generation_metadata')
             .eq('status', 'completed')
             .filter('generation_metadata->>seriesId', 'eq', seriesId)
             .filter('generation_metadata->>episodeNumber', 'eq', String(episodeNumber))
@@ -4243,7 +4243,7 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
             .limit(10);
 
           // 找到前一场景的最新已完成任务
-          let prevTask: { task_id?: string; thumbnail?: string; video_url?: string; duration?: string; generation_metadata?: Record<string, unknown> } | null = null;
+          let prevTask: { task_id?: string; volcengine_task_id?: string; thumbnail?: string; video_url?: string; duration?: string; generation_metadata?: Record<string, unknown> } | null = null;
           if (prevVideoTasks) {
             for (const t of prevVideoTasks) {
               const tMeta = parseMeta(t.generation_metadata);
@@ -4356,16 +4356,64 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
           } else if (!refInjected && prevTask?.video_url) {
             console.warn(`[Volcengine] ⚠️ Strategy2 SKIP: video not on OSS (url=${prevTask.video_url.substring(0, 50)})`);
           }
-          // v6.0.210: 已移除策略3（thumbnail首帧回退）和策略4（storyboard.image_url回退）
-          // 根因: thumbnail和image_url都是视频的首帧/封面图，注入后会导致所有后续场景的
-          // 视频画面都和前一场景的首帧一样——这正是"全都是第一帧"问题的根源
-          // 正确做法: 仅使用策略1(DB lastFrameUrl，来自Volcengine API return_last_frame)
-          // 和策略2(OSS视频截帧)获取真正的尾帧
+          // v6.0.213: 策略3——重新查询Volcengine API获取last_frame_url
+          // 根因: 对于旧代码生成的任务，完成后early-return导致never执行last_frame_url提取
+          // 此时DB中无有效lastFrameUrl，Strategy1+2都失败
+          // 解决: 实时查询Volcengine API获取fresh last_frame_url，下载并持久化到OSS
+          if (!refInjected && prevTask?.volcengine_task_id && VOLCENGINE_API_KEY) {
+            try {
+              console.log(`[Volcengine] 🔄 Strategy3: re-querying API for prev scene ${sceneNum - 1} task ${prevTask.volcengine_task_id}`);
+              const volcResp = await fetchWithTimeout(`${VOLCENGINE_BASE_URL}/${prevTask.volcengine_task_id}`, {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${VOLCENGINE_API_KEY}`, 'Content-Type': 'application/json' },
+              }, 15000);
+              if (volcResp.ok) {
+                const volcData = await volcResp.json();
+                const freshLastFrameUrl = volcData.content?.last_frame_url || '';
+                if (freshLastFrameUrl && freshLastFrameUrl.startsWith('http')) {
+                  console.log(`[Volcengine] 🎯 Strategy3: API returned fresh last_frame_url: ${freshLastFrameUrl.substring(0, 60)}...`);
+                  // 下载并持久化到OSS
+                  let persistedUrl = freshLastFrameUrl;
+                  if (isOSSConfigured()) {
+                    try {
+                      const lfResp = await fetchWithTimeout(freshLastFrameUrl, {}, 8000);
+                      if (lfResp.ok) {
+                        const lfBuf = await lfResp.arrayBuffer();
+                        if (lfBuf.byteLength > 500 && prevTask.task_id) {
+                          const ossLfUrl = await uploadToOSS(`last-frames/${prevTask.task_id}.jpg`, lfBuf, 'image/jpeg');
+                          if (ossLfUrl) {
+                            persistedUrl = ossLfUrl;
+                            // 保存到DB，下次直接用Strategy1
+                            const updMeta = { ...(parseMeta(prevTask.generation_metadata) || {}), lastFrameUrl: ossLfUrl };
+                            await supabase.from('video_tasks').update({ generation_metadata: updMeta }).eq('task_id', prevTask.task_id);
+                            console.log(`[Volcengine] ✅ Strategy3: persisted to OSS: ${ossLfUrl.substring(0, 60)}...`);
+                          }
+                        }
+                      }
+                    } catch (s3Err: unknown) {
+                      console.warn(`[Volcengine] Strategy3 OSS persist failed: ${getErrorMessage(s3Err)}`);
+                    }
+                  }
+                  // 验证尺寸后注入
+                  if (await validateImageDimensions(persistedUrl, 100)) {
+                    finalImages.push(persistedUrl);
+                    prevSceneImageInjected = true;
+                    refInjected = true;
+                    console.log(`[Volcengine] 🎯 Strategy3 OK: prev scene ${sceneNum - 1} API LAST_FRAME as i2v ref`);
+                  }
+                } else {
+                  console.warn(`[Volcengine] ⚠️ Strategy3: API did not return last_frame_url (may not have been generated with return_last_frame)`);
+                }
+              }
+            } catch (s3Err: unknown) {
+              console.warn(`[Volcengine] ⚠️ Strategy3 FAIL: ${getErrorMessage(s3Err)}`);
+            }
+          }
           if (!refInjected) {
-            console.warn(`[Volcengine] ⚠️ Strategy1+2 both failed for prev scene ${sceneNum - 1} — falling back to pure t2v mode (no thumbnail/first-frame injection to avoid first-frame duplication)`);
+            console.warn(`[Volcengine] ⚠️ Strategy1+2+3 all failed for prev scene ${sceneNum - 1} — pure t2v mode`);
           }
           if (!prevSceneImageInjected) {
-            console.warn(`[Volcengine] ❌ Strategies 1-2 failed for prev scene ${sceneNum - 1} — pure t2v mode (no visual continuity)`);
+            console.warn(`[Volcengine] ❌ Strategies 1-3 failed for prev scene ${sceneNum - 1} — pure t2v mode (no visual continuity)`);
           }
         } else if (sceneNum === 1 && episodeNumber > 1) {
           // v6.0.200: 跨集衔接——提取上一集最后场景视频的尾帧
@@ -4985,6 +5033,45 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
               console.log(`[OSS] ✅ Retry-transfer done for completed task ${_localId}`);
             }
           } catch (e: unknown) { console.warn(`[OSS] Retry-transfer failed for ${_localId}: ${getErrorMessage(e)}`); }
+        })().catch(() => {});
+      }
+      // v6.0.213: 后台补填lastFrameUrl——修复旧代码生成任务的early-return问题
+      // 旧任务完成后走early-return，永远不会执行content.last_frame_url提取代码
+      // 在此补填：如果DB中无有效lastFrameUrl（或是thumbnail污染），重新查询Volcengine API
+      const _curMeta = parseMeta(dbTask.generation_metadata) || {};
+      const _existingLf = (_curMeta as Record<string, unknown>).lastFrameUrl as string | undefined;
+      const _isValidLf = _existingLf && _existingLf.startsWith('http') && _existingLf.includes('.aliyuncs.com');
+      const _isPolluted = _existingLf && dbTask.thumbnail && _existingLf === dbTask.thumbnail;
+      if ((!_isValidLf || _isPolluted) && dbTask.volcengine_task_id && VOLCENGINE_API_KEY && dbTask.generation_metadata?.type === 'storyboard_video') {
+        const _lfTaskId = dbTask.task_id;
+        const _lfVolcId = dbTask.volcengine_task_id;
+        (async () => {
+          try {
+            const lfResp = await fetchWithTimeout(`${VOLCENGINE_BASE_URL}/${_lfVolcId}`, {
+              method: 'GET',
+              headers: { 'Authorization': `Bearer ${VOLCENGINE_API_KEY}`, 'Content-Type': 'application/json' },
+            }, 10000);
+            if (lfResp.ok) {
+              const lfData = await lfResp.json();
+              const freshLfUrl = lfData.content?.last_frame_url || '';
+              if (freshLfUrl && freshLfUrl.startsWith('http')) {
+                let finalLfUrl = freshLfUrl;
+                if (isOSSConfigured()) {
+                  const dlResp = await fetchWithTimeout(freshLfUrl, {}, 8000);
+                  if (dlResp.ok) {
+                    const buf = await dlResp.arrayBuffer();
+                    if (buf.byteLength > 500) {
+                      const ossUrl = await uploadToOSS(`last-frames/${_lfTaskId}.jpg`, buf, 'image/jpeg');
+                      if (ossUrl) finalLfUrl = ossUrl;
+                    }
+                  }
+                }
+                const updMeta = { ..._curMeta, lastFrameUrl: finalLfUrl };
+                await supabase.from('video_tasks').update({ generation_metadata: updMeta }).eq('task_id', _lfTaskId);
+                console.log(`[Volcengine] 🔧 Backfill lastFrameUrl for ${_lfTaskId}: ${finalLfUrl.substring(0, 60)}...`);
+              }
+            }
+          } catch { /* non-blocking background task */ }
         })().catch(() => {});
       }
       return c.json({ success: true, data: { task_id: dbTask.task_id, status: 'succeeded', content: { video_url: dbTask.video_url, cover_url: dbTask.thumbnail || '' }, created_at: dbTask.created_at, updated_at: dbTask.updated_at } });
