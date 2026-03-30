@@ -4309,35 +4309,16 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
           } else if (!refInjected && prevTask?.video_url) {
             console.warn(`[Volcengine] ⚠️ Strategy2 SKIP: video not on OSS (url=${prevTask.video_url.substring(0, 50)})`);
           }
-          // 策略3: 回退到thumbnail（首帧）
-          if (!refInjected && prevTask?.thumbnail) {
-            const refImageUrl = prevTask.thumbnail;
-            if (typeof refImageUrl === 'string' && refImageUrl.startsWith('http')) {
-              // v6.0.201: 对参考图完全跳过尺寸验证——有图总比没图好
-              finalImages.push(refImageUrl);
-              prevSceneImageInjected = true;
-              refInjected = true;
-              console.log(`[Volcengine] 🖼️ Strategy3 OK: prev scene ${sceneNum - 1} thumbnail as i2v ref: ${refImageUrl.substring(0, 60)}`);
-            }
-          }
-          // 策略4: 从series_storyboards.image_url获取（thumbnail同步到了这里）
+          // v6.0.210: 已移除策略3（thumbnail首帧回退）和策略4（storyboard.image_url回退）
+          // 根因: thumbnail和image_url都是视频的首帧/封面图，注入后会导致所有后续场景的
+          // 视频画面都和前一场景的首帧一样——这正是"全都是第一帧"问题的根源
+          // 正确做法: 仅使用策略1(DB lastFrameUrl，来自Volcengine API return_last_frame)
+          // 和策略2(OSS视频截帧)获取真正的尾帧
           if (!refInjected) {
-            try {
-              const { data: prevSb } = await supabase.from('series_storyboards')
-                .select('image_url, video_url')
-                .eq('series_id', seriesId).eq('episode_number', episodeNumber).eq('scene_number', sceneNum - 1)
-                .maybeSingle();
-              const sbImageUrl = prevSb?.image_url;
-              if (sbImageUrl && typeof sbImageUrl === 'string' && sbImageUrl.startsWith('http')) {
-                finalImages.push(sbImageUrl);
-                prevSceneImageInjected = true;
-                refInjected = true;
-                console.log(`[Volcengine] 🖼️ Strategy4 OK: prev scene ${sceneNum - 1} storyboard.image_url as i2v ref: ${sbImageUrl.substring(0, 60)}`);
-              }
-            } catch { /* non-blocking */ }
+            console.warn(`[Volcengine] ⚠️ Strategy1+2 both failed for prev scene ${sceneNum - 1} — falling back to pure t2v mode (no thumbnail/first-frame injection to avoid first-frame duplication)`);
           }
           if (!prevSceneImageInjected) {
-            console.warn(`[Volcengine] ❌ ALL 4 strategies failed for prev scene ${sceneNum - 1} — pure t2v mode (no visual continuity)`);
+            console.warn(`[Volcengine] ❌ Strategies 1-2 failed for prev scene ${sceneNum - 1} — pure t2v mode (no visual continuity)`);
           }
         } else if (sceneNum === 1 && episodeNumber > 1) {
           // v6.0.200: 跨集衔接——提取上一集最后场景视频的尾帧
@@ -4397,19 +4378,16 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
               console.warn(`[Volcengine] ⚠️ Cross-ep snapshot failed: ${getErrorMessage(snapErr)}`);
             }
           }
-          // 策略2: 回退到thumbnail
-          if (!crossEpLastFrameOk && prevEpLastTask?.thumbnail) {
-            const prevEpImageUrl = prevEpLastTask.thumbnail;
-            if (typeof prevEpImageUrl === 'string' && prevEpImageUrl.startsWith('http')) {
-              finalImages.push(prevEpImageUrl);
-              prevSceneImageInjected = true;
-              console.log(`[Volcengine] 🖼️ Cross-ep fallback: ep${episodeNumber - 1} thumbnail as i2v ref`);
-            }
+          // v6.0.210: 已移除跨集thumbnail首帧回退——同理，thumbnail是首帧不是尾帧
+          if (!crossEpLastFrameOk) {
+            console.warn(`[Volcengine] ⚠️ Cross-ep: ep${episodeNumber - 1} no valid last frame found — pure t2v mode`);
           }
         }
 
-        // v6.0.196: 风格锚定图——优先用系列首个已完成视频缩略图，回退到styleAnchorImageUrl
-        if (finalImages.length === 0) {
+        // v6.0.210: 风格锚定图——仅用于scene1（第一个场景），不用于后续场景
+        // 后续场景(scene2+)应该使用前序场景的尾帧，而不是风格锚定图
+        // 风格锚定图只在第一个场景没有参考图时才注入
+        if (finalImages.length === 0 && (!storyboardNumber || parseInt(storyboardNumber) === 1)) {
           let anchorImageUrl = '';
           const { data: firstCompletedTask } = await supabase
             .from('video_tasks')
@@ -5001,10 +4979,17 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
     }
 
     const volcStatus = apiData.status || 'unknown';
-    let rawVideoUrl = '', rawThumbnailUrl = '';
+    let rawVideoUrl = '', rawThumbnailUrl = '', rawLastFrameUrl = '';
     if (['succeeded', 'completed', 'success'].includes(volcStatus)) {
       rawVideoUrl = apiData.content?.video_url || apiData.video_url || '';
       rawThumbnailUrl = apiData.content?.cover_url || apiData.thumbnail || '';
+      // v6.0.210: 从Volcengine API响应中提取尾帧URL（return_last_frame=true时返回）
+      // 官方文档: 任务完成后content.last_frame_url包含尾帧图片URL
+      // 这是获取尾帧最可靠的方式，优先于OSS截帧和客户端canvas提取
+      rawLastFrameUrl = apiData.content?.last_frame_url || '';
+      if (rawLastFrameUrl) {
+        console.log(`[Volcengine] 🎯 API returned last_frame_url: ${rawLastFrameUrl.substring(0, 80)}...`);
+      }
     }
 
     // ---- v5.6.1: 视频完成 — 快速写DB + 立即返回，OSS转存fire-and-forget ----
@@ -5018,8 +5003,15 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
       // Step 1: 立即将火山引擎原始URL写入DB（~100ms）
       const upd: Record<string, unknown> = { status: 'completed', video_url: rawVideoUrl, updated_at: new Date().toISOString() };
       if (rawThumbnailUrl) upd.thumbnail = rawThumbnailUrl;
+      // v6.0.210: 如果API返回了尾帧URL，立即保存到generation_metadata.lastFrameUrl
+      // 这是最可靠的尾帧来源，直接来自Volcengine模型输出
+      if (rawLastFrameUrl && rawLastFrameUrl.startsWith('http')) {
+        const curMeta = parseMeta(dbTask.generation_metadata) || {};
+        upd.generation_metadata = { ...curMeta, lastFrameUrl: rawLastFrameUrl };
+        console.log(`[Volcengine] 🎯 Saving API last_frame_url to DB for task ${localId}`);
+      }
       await supabase.from('video_tasks').update(upd).eq('task_id', localId);
-      console.log(`[Volcengine] ✅ Task ${localId} completed → saved Volcengine URL to DB`);
+      console.log(`[Volcengine] ✅ Task ${localId} completed → saved Volcengine URL to DB${rawLastFrameUrl ? ' (with last_frame_url)' : ''}`);
 
       // Step 2: 同步到series表（轻量DB操作）
       if (dbTask.generation_metadata?.type === 'storyboard_video') {
@@ -5181,23 +5173,11 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
         }
       }
 
-      // v6.0.201: 如果尾帧提取失败（IMM未开通），将thumbnail作为lastFrameUrl的最低保底
-      // 这确保下一场景至少能拿到前序场景的FIRST frame作为i2v参考
-      if (dbTask.generation_metadata?.type === 'storyboard_video' && rawThumbnailUrl) {
-        try {
-          const { data: checkTask } = await supabase.from('video_tasks')
-            .select('generation_metadata').eq('task_id', localId).maybeSingle();
-          const checkMeta = parseMeta(checkTask?.generation_metadata);
-          if (!checkMeta?.lastFrameUrl) {
-            const thumbUrl = rawThumbnailUrl;
-            if (thumbUrl.startsWith('http')) {
-              const updMeta = { ...(checkMeta || {}), lastFrameUrl: thumbUrl };
-              await supabase.from('video_tasks').update({ generation_metadata: updMeta }).eq('task_id', localId);
-              console.log(`[OSS] 🖼️ Thumbnail saved as fallback lastFrameUrl for ${localId} (IMM not available)`);
-            }
-          }
-        } catch { /* non-blocking */ }
-      }
+      // v6.0.210: 已移除thumbnail保底lastFrameUrl逻辑
+      // thumbnail是视频首帧/封面图，将其作为lastFrameUrl会导致下一场景的参考图
+      // 是前一场景的首帧而非尾帧，产生"所有视频都是第一帧"的问题
+      // 正确的尾帧来源优先级: (1) Volcengine API content.last_frame_url (2) OSS截帧 (3) 客户端canvas提取
+      // 如果以上都失败，宁可用纯t2v模式也不要注入错误的首帧
 
       // Step 4: 返回（可能是OSS URL或原始Volcengine URL）
       return c.json({
