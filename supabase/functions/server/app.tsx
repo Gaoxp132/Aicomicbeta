@@ -4258,15 +4258,42 @@ app.post(`${PREFIX}/volcengine/generate`, async (c) => {
           let refInjected = false;
           // 策略1: DB中已保存的尾帧（存储在generation_metadata.lastFrameUrl中）
           const prevMeta = parseMeta(prevTask?.generation_metadata);
-          const savedLastFrameUrl = prevMeta?.lastFrameUrl as string | undefined;
+          let savedLastFrameUrl = prevMeta?.lastFrameUrl as string | undefined;
           if (savedLastFrameUrl && typeof savedLastFrameUrl === 'string' && savedLastFrameUrl.startsWith('http')) {
+            // v6.0.211: 检测是否是临时URL（非OSS），如果是则尝试转存到OSS
+            const isOSSUrl = savedLastFrameUrl.includes('.aliyuncs.com');
+            if (!isOSSUrl && isOSSConfigured()) {
+              console.log(`[Volcengine] 📦 Strategy1: savedLastFrameUrl is temp URL, attempting OSS persist...`);
+              try {
+                const lfResp = await fetchWithTimeout(savedLastFrameUrl, {}, 8000);
+                if (lfResp.ok) {
+                  const lfBuf = await lfResp.arrayBuffer();
+                  if (lfBuf.byteLength > 500 && prevTask?.task_id) {
+                    const ossLfUrl = await uploadToOSS(`last-frames/${prevTask.task_id}.jpg`, lfBuf, 'image/jpeg');
+                    if (ossLfUrl) {
+                      // 更新DB为永久URL
+                      const updMeta = { ...(prevMeta || {}), lastFrameUrl: ossLfUrl };
+                      await supabase.from('video_tasks').update({ generation_metadata: updMeta }).eq('task_id', prevTask.task_id);
+                      savedLastFrameUrl = ossLfUrl;
+                      console.log(`[Volcengine] ✅ Strategy1: temp URL persisted to OSS: ${ossLfUrl.substring(0, 60)}...`);
+                    }
+                  }
+                } else {
+                  console.warn(`[Volcengine] ⚠️ Strategy1: temp URL expired/unreachable (HTTP ${lfResp.status}), falling through to Strategy2`);
+                  savedLastFrameUrl = undefined; // 清除过期URL，让Strategy2接手
+                }
+              } catch (persistErr: unknown) {
+                console.warn(`[Volcengine] ⚠️ Strategy1: temp URL persist failed: ${getErrorMessage(persistErr)}`);
+                savedLastFrameUrl = undefined; // 清除，让Strategy2接手
+              }
+            }
             // v6.0.201: 对参考图放宽尺寸验证——100px即可（原300px过严）
-            if (await validateImageDimensions(savedLastFrameUrl, 100)) {
+            if (savedLastFrameUrl && await validateImageDimensions(savedLastFrameUrl, 100)) {
               finalImages.push(savedLastFrameUrl);
               prevSceneImageInjected = true;
               refInjected = true;
-              console.log(`[Volcengine] 🎯 Strategy1 OK: prev scene ${sceneNum - 1} SAVED LAST FRAME as i2v ref`);
-            } else {
+              console.log(`[Volcengine] 🎯 Strategy1 OK: prev scene ${sceneNum - 1} SAVED LAST FRAME as i2v ref${isOSSUrl ? '' : ' (persisted to OSS)'}`);
+            } else if (savedLastFrameUrl) {
               console.warn(`[Volcengine] ⚠️ Strategy1 FAIL: savedLastFrameUrl dimensions too small or unreachable`);
             }
           }
@@ -5003,15 +5030,37 @@ app.get(`${PREFIX}/volcengine/status/:taskId`, async (c) => {
       // Step 1: 立即将火山引擎原始URL写入DB（~100ms）
       const upd: Record<string, unknown> = { status: 'completed', video_url: rawVideoUrl, updated_at: new Date().toISOString() };
       if (rawThumbnailUrl) upd.thumbnail = rawThumbnailUrl;
-      // v6.0.210: 如果API返回了尾帧URL，立即保存到generation_metadata.lastFrameUrl
-      // 这是最可靠的尾帧来源，直接来自Volcengine模型输出
+      // v6.0.211: 如果API返回了尾帧URL，立即下载并转存到OSS获取永久链接
+      // Volcengine的last_frame_url有24小时有效期，直接保存会导致隔天生成下一场景时URL过期
+      // 尾帧图片通常只有100-500KB，下载+上传非常快（<2s）
       if (rawLastFrameUrl && rawLastFrameUrl.startsWith('http')) {
         const curMeta = parseMeta(dbTask.generation_metadata) || {};
+        // 先保存临时URL到DB（确保即使OSS转存失败也有值可用）
         upd.generation_metadata = { ...curMeta, lastFrameUrl: rawLastFrameUrl };
-        console.log(`[Volcengine] 🎯 Saving API last_frame_url to DB for task ${localId}`);
+        console.log(`[Volcengine] 🎯 API returned last_frame_url for task ${localId}, persisting to OSS...`);
+        // 同步转存到OSS（图片很小，不会阻塞太久）
+        try {
+          const lfResp = await fetchWithTimeout(rawLastFrameUrl, {}, 8000);
+          if (lfResp.ok) {
+            const lfBuf = await lfResp.arrayBuffer();
+            if (lfBuf.byteLength > 500) {
+              const ossLfUrl = await uploadToOSS(`last-frames/${localId}.jpg`, lfBuf, 'image/jpeg');
+              if (ossLfUrl) {
+                upd.generation_metadata = { ...curMeta, lastFrameUrl: ossLfUrl };
+                console.log(`[Volcengine] ✅ last_frame_url persisted to OSS: ${ossLfUrl.substring(0, 60)}... (${(lfBuf.byteLength / 1024).toFixed(1)}KB)`);
+              }
+            } else {
+              console.warn(`[Volcengine] ⚠️ last_frame_url image too small (${lfBuf.byteLength}B), keeping temp URL`);
+            }
+          } else {
+            console.warn(`[Volcengine] ⚠️ Failed to download last_frame_url (HTTP ${lfResp.status}), keeping temp URL`);
+          }
+        } catch (lfErr: unknown) {
+          console.warn(`[Volcengine] ⚠️ last_frame_url OSS persist failed: ${getErrorMessage(lfErr)}, keeping temp URL`);
+        }
       }
       await supabase.from('video_tasks').update(upd).eq('task_id', localId);
-      console.log(`[Volcengine] ✅ Task ${localId} completed → saved Volcengine URL to DB${rawLastFrameUrl ? ' (with last_frame_url)' : ''}`);
+      console.log(`[Volcengine] ✅ Task ${localId} completed → saved to DB${rawLastFrameUrl ? ' (with last_frame_url)' : ''}`);
 
       // Step 2: 同步到series表（轻量DB操作）
       if (dbTask.generation_metadata?.type === 'storyboard_video') {

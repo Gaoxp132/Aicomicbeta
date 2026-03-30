@@ -122,6 +122,6 @@
  * (earlier versions omitted for brevity — see git history)
  */
 
-export const APP_VERSION = '6.0.200';
-export const VERSION_DATE = '2026-03-18';
-export const VERSION_DESCRIPTION = '全项目 any 类型完全清零';
+export const APP_VERSION = '6.0.211';
+export const VERSION_DATE = '2026-03-30';
+export const VERSION_DESCRIPTION = 'Volcengine尾帧URL永久化——API返回的24h临时URL立即转存OSS';
